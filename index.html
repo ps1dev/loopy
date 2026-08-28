@@ -199,6 +199,46 @@
 
 <div id="drop" class="drop hidden">Drop an audio file</div>
 
+<div id="notserved" class="notserved hidden">
+  <div class="notserved-inner">
+    <h2>This page has to be served over HTTP</h2>
+    <p>Opening <code>index.html</code> directly gives it a <code>file://</code>
+    address, and browsers refuse to load ES modules from there. The page draws,
+    and then nothing works, which is why you are seeing this instead of
+    silence.</p>
+    <p>In a terminal, from the folder holding <code>index.html</code>:</p>
+    <pre>python3 -m http.server 8080</pre>
+    <p>then open <a href="http://localhost:8080/">http://localhost:8080/</a>.</p>
+    <p class="alt">On macOS you can double-click <code>serve.command</code> in
+    this folder instead, which does both.</p>
+  </div>
+</div>
+
+<!--
+  Deliberately a CLASSIC script, not a module: this is the one thing that must
+  still run when modules are blocked. It detects the two ways the app can fail
+  to start and says so on the page, because the failure is otherwise invisible -
+  the HTML and CSS load fine over file://, so the window looks completely
+  healthy and simply ignores every click.
+-->
+<script>
+(function () {
+  var show = function (why) {
+    var el = document.getElementById('notserved');
+    if (el) el.classList.remove('hidden');
+    console.error('loop editor did not start: ' + why);
+  };
+  if (location.protocol === 'file:') { show('file:// origin blocks ES modules'); return; }
+  // Any other reason the module graph failed - wrong MIME type from an odd
+  // server, a syntax error, a missing file.
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      if (!window.__loopeditor) show('the module did not evaluate');
+    }, 300);
+  });
+})();
+</script>
+
 <script type="module" src="js/app.js"></script>
 </body>
 </html>

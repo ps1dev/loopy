@@ -8,11 +8,20 @@ Plain HTML/CSS/JS, ES modules, no frameworks, no build step, no dependencies.
 
 ## Running it
 
-ES modules are blocked by CORS on `file://`, so it has to come off a server.
-Any static server will do:
+**It has to be served over HTTP. Opening `index.html` directly does not work** -
+that gives it a `file://` address and browsers refuse to load ES modules from
+there, so the page draws and then ignores every click.
+
+Easiest, on macOS: double-click **`serve.command`** in this folder. It starts a
+server on a free port and opens the browser at it.
+
+Otherwise, from the folder holding `index.html`:
 
     python3 -m http.server 8080
     # then open http://localhost:8080/
+
+If you do open it from `file://` anyway, the page says so and gives you the
+command rather than failing silently.
 
 ## What it does
 

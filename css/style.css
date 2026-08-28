@@ -238,3 +238,32 @@ kbd {
   z-index: 50;
   pointer-events: none;
 }
+
+/* Shown only when the app failed to start - see the classic script in
+   index.html. Deliberately covers everything: a half-working window that
+   silently ignores clicks is worse than a blocked one that explains itself. */
+.notserved {
+  position: fixed;
+  inset: 0;
+  background: var(--bg);
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.notserved-inner { max-width: 560px; }
+.notserved h2 { margin: 0 0 12px; font-size: 16px; color: var(--accent); }
+.notserved p { margin: 0 0 10px; line-height: 1.5; }
+.notserved pre {
+  background: var(--panel2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 10px 12px;
+  font-family: ui-monospace, monospace;
+  color: var(--green);
+  user-select: all;
+}
+.notserved code { background: var(--panel2); padding: 0 4px; border-radius: 2px; }
+.notserved a { color: var(--green); }
+.notserved .alt { color: var(--dim); font-size: 12px; }
