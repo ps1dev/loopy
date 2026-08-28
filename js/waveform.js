@@ -42,7 +42,8 @@ export function buildPeaks(channels) {
   return out;
 }
 
-var RULER_H = 22;
+var RULER_H = 22;       // time ruler
+var BAR_RULER_H = 17;   // bar ruler, only present when the grid is on
 var HANDLE_PX = 6;      // grab radius for a loop edge
 
 export class WaveformView {
@@ -95,6 +96,12 @@ export class WaveformView {
   get cssWidth() { return this.canvas.clientWidth || 1; }
   get cssHeight() { return this.canvas.clientHeight || 1; }
   get viewLength() { return Math.max(1, this.viewEnd - this.viewStart); }
+
+  /* The bar ruler only exists when there is a grid to number, so the lane
+   * area has to be measured rather than assumed. Hard-coding RULER_H here was
+   * what drew the waveform under the bar strip on the first attempt. */
+  get barRulerHeight() { return (this.showGrid && this.grid) ? BAR_RULER_H : 0; }
+  get rulerHeight() { return RULER_H + this.barRulerHeight; }
 
   sampleToX(s) { return (s - this.viewStart) * this.cssWidth / this.viewLength; }
   xToSample(x) { return this.viewStart + x * this.viewLength / this.cssWidth; }
@@ -167,8 +174,8 @@ export class WaveformView {
       return;
     }
 
-    var lanesTop = RULER_H;
-    var lanesH = h - RULER_H;
+    var lanesTop = this.rulerHeight;
+    var lanesH = h - lanesTop;
     var nch = this.channels.length;
     var laneH = lanesH / nch;
 
@@ -315,12 +322,14 @@ export class WaveformView {
   }
 
   _drawRuler(ctx, w) {
+    var total = this.rulerHeight;
     ctx.fillStyle = '#171c23';
-    ctx.fillRect(0, 0, w, RULER_H);
+    ctx.fillRect(0, 0, w, total);
     ctx.strokeStyle = '#2a323d';
     ctx.beginPath();
-    ctx.moveTo(0, RULER_H + 0.5); ctx.lineTo(w, RULER_H + 0.5);
+    ctx.moveTo(0, total + 0.5); ctx.lineTo(w, total + 0.5);
     ctx.stroke();
+    if (this.barRulerHeight) this._drawBarRuler(ctx, w);
 
     var spanSec = this.viewLength / this.sampleRate;
     var target = spanSec / (w / 90);            // ~90px between labels
@@ -337,6 +346,56 @@ export class WaveformView {
       ctx.strokeStyle = '#39444f';
       ctx.beginPath(); ctx.moveTo(x, RULER_H - 6); ctx.lineTo(x, RULER_H); ctx.stroke();
       ctx.fillText(formatTime(t, step), x + 3, 11);
+    }
+  }
+
+  /*
+   * Bar numbers under the time ruler. Labels thin out as you zoom out - a
+   * ruler that draws "17" on top of "18" is less useful than one that shows
+   * every fourth bar, so the step is chosen from the pixel spacing rather
+   * than fixed.
+   */
+  _drawBarRuler(ctx, w) {
+    var y0 = RULER_H;
+    var h = BAR_RULER_H;
+    ctx.fillStyle = '#1c232c';
+    ctx.fillRect(0, y0, w, h);
+    ctx.strokeStyle = '#2a323d';
+    ctx.beginPath();
+    ctx.moveTo(0, y0 + 0.5); ctx.lineTo(w, y0 + 0.5);
+    ctx.stroke();
+
+    var pxPerBar = this.grid.samplesPerBar * this.cssWidth / this.viewLength;
+    if (!(pxPerBar > 0.5)) return;                 // too dense to mean anything
+    var step = 1;
+    while (pxPerBar * step < 44) step *= (step === 1 ? 2 : 2);
+
+    var bars = this.grid.barsIn(this.viewStart, this.viewEnd, 6000);
+    ctx.font = '10px ui-monospace, monospace';
+    for (var i = 0; i < bars.length; i++) {
+      var b = bars[i];
+      var x = Math.round(this.sampleToX(b.sample)) + 0.5;
+      if (x < -20 || x > w + 20) continue;
+      var labelled = ((b.bar - 1) % step) === 0;
+      ctx.strokeStyle = labelled ? '#4a5867' : '#333e4a';
+      ctx.beginPath();
+      ctx.moveTo(x, y0 + (labelled ? 2 : h - 5));
+      ctx.lineTo(x, y0 + h);
+      ctx.stroke();
+      if (labelled) {
+        ctx.fillStyle = '#9fb0c0';
+        ctx.fillText(String(b.bar), x + 3, y0 + 11);
+      }
+    }
+
+    // Mark where the playhead sits in bar terms, so the strip answers "which
+    // bar am I in" without cross-referencing the readout below.
+    var px = this.sampleToX(this.playhead);
+    if (px >= -2 && px <= w + 2) {
+      ctx.fillStyle = 'rgba(255,92,114,0.22)';
+      var bs = this.sampleToX(this.grid.barStartAt(this.playhead));
+      var be = this.sampleToX(this.grid.barStartAt(this.playhead) + this.grid.samplesPerBar);
+      ctx.fillRect(bs, y0 + 1, Math.max(1, be - bs), h - 1);
     }
   }
 
@@ -425,6 +484,21 @@ export class WaveformView {
     return ev.clientX - r.left;
   }
 
+  _localY(ev, el) {
+    var r = (el || this.canvas).getBoundingClientRect();
+    return ev.clientY - r.top;
+  }
+
+  /* Which horizontal band the pointer is in. The bar strip is a click target
+   * with its own meaning, so it has to be distinguished from the lanes -
+   * and loop handles must not be grabbable through the ruler, or the strip
+   * becomes unclickable wherever a loop edge happens to line up. */
+  _band(y) {
+    if (y < RULER_H) return 'time';
+    if (y < this.rulerHeight) return 'bars';
+    return 'lanes';
+  }
+
   _bind() {
     var self = this;
 
@@ -435,6 +509,15 @@ export class WaveformView {
 
       if (ev.button === 1 || (ev.button === 0 && ev.shiftKey && ev.altKey)) {
         self._drag = { kind: 'pan', x: x, start: self.viewStart, end: self.viewEnd };
+        ev.preventDefault();
+        return;
+      }
+      var band = self._band(self._localY(ev));
+      if (band !== 'lanes' && ev.button === 0) {
+        // Clicking the bar strip means "go to that bar", not "go to the
+        // nearest grid line" - the number under the cursor is the request.
+        self._drag = { kind: 'seek', band: band };
+        if (self.onSeek) self.onSeek(self.xToSample(x), withBand(mods, band));
         ev.preventDefault();
         return;
       }
@@ -486,6 +569,7 @@ export class WaveformView {
         d.x = x;
         if (self.onDragLoop) self.onDragLoop(d.loop, dx, mods);
       } else if (d.kind === 'seek') {
+        mods = withBand(mods, d.band);
         // Scrubbing snaps too - a playhead that snaps on click but slides
         // freely on drag is worse than one that never snaps, because the
         // reported position then depends on how you happened to click.
@@ -536,6 +620,13 @@ export class WaveformView {
 
     window.addEventListener('resize', function () { self.requestDraw(); });
   }
+}
+
+function withBand(mods, band) {
+  var m = { alt: false, shift: false, ctrl: false };
+  if (mods) { m.alt = mods.alt; m.shift = mods.shift; m.ctrl = mods.ctrl; }
+  m.band = band || 'lanes';
+  return m;
 }
 
 export function formatTime(sec, step) {

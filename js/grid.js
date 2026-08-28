@@ -75,6 +75,43 @@ export class BeatGrid {
     return out;
   }
 
+  get samplesPerBar() {
+    return this.samplesPerBeat * Math.max(1, this.beatsPerBar);
+  }
+
+  /* Fractional bar index at a sample position. 0-based internally; the UI
+   * adds one, because DAWs count bars from 1 and users say "bar 5". */
+  barAt(sample) {
+    return (sample - this.offset) / this.samplesPerBar;
+  }
+
+  sampleOfBar(n) {
+    return this.offset + n * this.samplesPerBar;
+  }
+
+  /* Start of the bar containing `sample`, as an integer sample index. Used by
+   * the bar ruler: clicking "bar 5" means the start of bar 5, not the nearest
+   * grid line to where the pixel happened to fall. */
+  barStartAt(sample) {
+    return Math.round(this.sampleOfBar(Math.floor(this.barAt(sample) + 1e-9)));
+  }
+
+  /* Every bar line in [from, to] as {sample, bar} with bar 1-based.
+   * `limit` guards a zoomed-out view from asking for thousands. */
+  barsIn(from, to, limit) {
+    var out = [];
+    var spb = this.samplesPerBar;
+    if (!(spb > 0)) return out;
+    var first = Math.ceil(this.barAt(from));
+    var last = Math.floor(this.barAt(to));
+    if (last < first) return out;
+    if (limit && (last - first + 1) > limit) return out;
+    for (var n = first; n <= last; n++) {
+      out.push({ sample: Math.round(this.sampleOfBar(n)), bar: n + 1 });
+    }
+    return out;
+  }
+
   /* "bar.beat.tick" readout for a sample position, 1-based like a DAW. */
   positionLabel(sample) {
     var beat = (sample - this.offset) / this.samplesPerBeat;

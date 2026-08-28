@@ -230,6 +230,41 @@ await page.check('#snapgrid');
 await page.uncheck('#gridon');
 await page.waitForTimeout(80);
 
+console.log('\n[6c] the bar ruler');
+await page.click('#fit');
+await page.check('#gridon');
+await page.waitForTimeout(120);
+const rb = await page.locator('#wave').boundingBox();
+const geom = await page.evaluate(() => {
+  const a = window.__loopeditor;
+  return { spBar: a.grid.samplesPerBar, rulerH: a.view.rulerHeight, barH: a.view.barRulerHeight };
+});
+check('bar ruler appears when the grid is on', geom.barH > 0, JSON.stringify(geom));
+// 120 BPM / 4/4 at 44100 = 88200 samples per bar; the fixture is 132300
+// frames, so bar 2 starts 2/3 of the way across a fitted view.
+check('samples per bar as expected', geom.spBar === 88200, String(geom.spBar));
+
+async function clickBarStrip(fracX) {
+  await page.mouse.click(rb.x + rb.width * fracX, rb.y + 30);   // inside the bar strip
+  await page.waitForTimeout(80);
+  return await page.evaluate(() => window.__loopeditor.engine.positionSamples());
+}
+let pos = await clickBarStrip(0.72);
+check('clicking bar 2 lands exactly on the bar start', pos === 88200, String(pos));
+pos = await clickBarStrip(0.40);
+check('clicking inside bar 1 lands on bar 1 start', pos === 0, String(pos));
+
+// The strip must not be a dead zone that grabs loop handles instead.
+const grabbed = await page.evaluate(() => window.__loopeditor.view._drag);
+check('bar-strip click did not start a handle drag', !grabbed || grabbed.kind === 'seek',
+  JSON.stringify(grabbed));
+
+await page.screenshot({ path: path.join(outDir, 'shot-barruler.png') });
+await page.uncheck('#gridon');
+await page.waitForTimeout(80);
+const off = await page.evaluate(() => window.__loopeditor.view.barRulerHeight);
+check('bar ruler disappears with the grid off', off === 0, String(off));
+
 console.log('\n[7] add a second loop and export');
 await page.click('#addloop');
 await page.waitForTimeout(60);

@@ -36,7 +36,11 @@ Anything that is not a RIFF file goes through `decodeAudioData`, so mp3, ogg,
 flac and m4a work to whatever extent the browser supports them.
 
 **Display.** Waveform with a per-channel lane, a time ruler, an overview strip,
-and an optional beat grid. Zoom runs from the whole file down to individual
+and an optional beat grid. With the grid on, a second ruler row below the time
+row numbers the bars and shades the bar the playhead is in. **Click a bar
+number to jump to the start of that bar** - that click always goes to the bar
+start regardless of the snap setting, because the number under the cursor is
+the request. Zoom runs from the whole file down to individual
 samples with the sample dots drawn. Drawing uses a peak pyramid built once on
 load, so scrubbing a long file stays responsive.
 

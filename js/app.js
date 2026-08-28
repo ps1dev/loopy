@@ -343,7 +343,12 @@ view.onSelect = function (i) { if (i !== state.selected) selectLoop(i); };
  */
 view.onSeek = function (sample, mods) {
   var bypass = mods && mods.alt;
-  if (!bypass && $('snapgrid').checked && grid.enabled) {
+  if (!bypass && mods && mods.band === 'bars' && grid.enabled) {
+    // Clicked the bar strip: go to the START of that bar, whatever the snap
+    // checkbox says. Clicking a labelled bar number and landing on a beat
+    // inside the previous bar would make the label a lie.
+    sample = grid.barStartAt(sample);
+  } else if (!bypass && $('snapgrid').checked && grid.enabled) {
     sample = grid.nearestLine(sample);
   } else {
     sample = Math.round(sample);
