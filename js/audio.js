@@ -38,14 +38,30 @@ export class AudioEngine {
     this.core.onEnded = function () { if (self.onEnded) self.onEnded(); };
   }
 
-  async init() {
-    if (this.ctx) {
-      if (this.ctx.state === 'suspended') await this.ctx.resume();
-      return;
+  /*
+   * NEVER await resume(). On a context the autoplay policy has blocked,
+   * resume() returns a promise that stays PENDING - it does not reject - so
+   * `await this.ctx.resume()` hangs the caller until some unrelated future
+   * gesture starts the context. That was the cause of "the first non-WAV file
+   * hangs until you load a second one": the second load supplied the gesture
+   * that unblocked the first load's await.
+   *
+   * Setting up the graph does not need a running context; only hearing it
+   * does. So resume is fired and forgotten here, and retried in play(), which
+   * is where a gesture is actually present.
+   */
+  _kick() {
+    if (this.ctx && this.ctx.state === 'suspended') {
+      var p = this.ctx.resume();
+      if (p && p.catch) p.catch(function () { /* still blocked; play() retries */ });
     }
+  }
+
+  async init() {
+    if (this.ctx) { this._kick(); return; }
     var Ctor = window.AudioContext || window.webkitAudioContext;
     this.ctx = new Ctor();
-    if (this.ctx.state === 'suspended') await this.ctx.resume();
+    this._kick();
     this.core.outputRate = this.ctx.sampleRate;
 
     try {
@@ -118,6 +134,7 @@ export class AudioEngine {
 
   play(fromSample) {
     if (!this.core.frames) return;
+    this._kick();          // a play click is a gesture; this is where it lands
     this._pushParams();
     this.core.play(fromSample);
   }

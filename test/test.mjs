@@ -664,3 +664,58 @@ function buildMiniPlist(bpm) {
   for (const p of parts) { out.set(p, o); o += p.length; }
   return out.buffer;
 }
+
+/* ---- chunked peak building --------------------------------------------- */
+
+import { buildPeaks, buildPeaksAsync } from '../js/waveform.js';
+
+function noisy(n) {
+  const a = new Float32Array(n);
+  // Deterministic, and varied enough that min/max per bucket differ.
+  let x = 12345;
+  for (let i = 0; i < n; i++) { x = (x * 1103515245 + 12345) & 0x7fffffff; a[i] = (x / 0x3fffffff) - 1; }
+  return a;
+}
+
+test('the async peak builder produces exactly the same pyramid as the sync one', async () => {
+  // The whole point of the chunked version is that it is only a scheduling
+  // change. If the numbers differ at all, the waveform you see while loading
+  // is not the waveform you get.
+  const ch = [noisy(200000), noisy(200000)];
+  const sync = buildPeaks(ch);
+  const async_ = await buildPeaksAsync(ch);
+  assert.equal(async_.length, sync.length);
+  for (let c = 0; c < sync.length; c++) {
+    assert.equal(async_[c].length, sync[c].length, 'level count differs on channel ' + c);
+    for (let l = 0; l < sync[c].length; l++) {
+      assert.equal(async_[c][l].bucket, sync[c][l].bucket);
+      assert.deepEqual(Array.from(async_[c][l].min), Array.from(sync[c][l].min), 'min level ' + l);
+      assert.deepEqual(Array.from(async_[c][l].max), Array.from(sync[c][l].max), 'max level ' + l);
+    }
+  }
+});
+
+test('the async builder actually yields, and reports monotonic progress', async () => {
+  // A "chunked" builder that never yields is the failure this guards: it
+  // would pass the equality test above and still freeze the page.
+  let ticks = 0;
+  const seen = [];
+  const timer = setInterval(() => { ticks++; }, 1);
+  const t0 = Date.now();
+  await buildPeaksAsync([noisy(3000000)], f => seen.push(f));
+  clearInterval(timer);
+
+  assert.ok(seen.length > 1, 'progress reported ' + seen.length + ' time(s); expected several');
+  assert.equal(seen[seen.length - 1], 1, 'must finish at exactly 1');
+  for (let i = 1; i < seen.length; i++) {
+    assert.ok(seen[i] >= seen[i - 1], 'progress went backwards: ' + seen[i - 1] + ' -> ' + seen[i]);
+  }
+  assert.ok(seen.every(f => f >= 0 && f <= 1), 'progress out of range');
+  assert.ok(ticks > 0,
+    'the event loop never ran during the build (took ' + (Date.now() - t0) + 'ms) - it did not yield');
+});
+
+test('the async builder handles an empty source without dividing by zero', async () => {
+  const out = await buildPeaksAsync([new Float32Array(0)]);
+  assert.ok(Array.isArray(out));
+});

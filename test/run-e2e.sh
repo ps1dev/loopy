@@ -56,6 +56,18 @@ step "browser"
 node test/e2e.mjs "http://127.0.0.1:$PORT/" "$PLAYWRIGHT_DIR" "$CHROMIUM" \
   "$WORK/fixture.wav" "$WORK/out" || rc=1
 
+step "decode path (audio context blocked)"
+if command -v ffmpeg >/dev/null 2>&1; then
+  ffmpeg -y -loglevel error -i "$WORK/fixture.wav" -c:a libmp3lame -b:a 128k "$WORK/fixture.mp3" || rc=1
+  # Served copy, so the page can fetch it for the mechanism check. Removed after.
+  cp "$WORK/fixture.mp3" "$ROOT/fixture-probe.mp3"
+  node test/e2e-decode.mjs "http://127.0.0.1:$PORT/" "$PLAYWRIGHT_DIR" "$CHROMIUM" \
+    "$WORK/fixture.mp3" || rc=1
+  rm -f "$ROOT/fixture-probe.mp3"
+else
+  echo "  SKIPPED: no ffmpeg, cannot build a non-WAV fixture"
+fi
+
 step "independent verification of the exported file"
 if [ -f "$WORK/out/exported.wav" ]; then
   python3 test/fixture.py verify "$WORK/out/exported.wav" "$WORK/out/expected.json" \

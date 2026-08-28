@@ -33,7 +33,19 @@ and shown. PCM 8/16/24/32-bit and 32/64-bit float are read, including
 `WAVE_FORMAT_EXTENSIBLE`.
 
 Anything that is not a RIFF file goes through `decodeAudioData`, so mp3, ogg,
-flac and m4a work to whatever extent the browser supports them.
+flac and m4a work to whatever extent the browser supports them. That decode
+runs on a throwaway `OfflineAudioContext`, never on the playback context: a
+decode issued on a suspended context does not reliably call back (on macOS
+Safari it never resolves), which showed up as the first non-WAV file hanging
+until a second file was loaded and supplied the gesture that unblocked it.
+Non-WAV imports are resampled to the decoding context's rate - there is no way
+to learn a compressed file's native rate without decoding it first.
+
+Loading shows an overlay with a spinner once it passes ~180 ms, so a small file
+does not flash one. No progress bar: `decodeAudioData` reports no progress at
+all, and a bar that is honest for one phase and invented for another is worse
+than a spinner. The waveform build afterwards is chunked so the window stays
+responsive and the spinner keeps turning.
 
 **Display.** Waveform with a per-channel lane, a time ruler, an overview strip,
 and an optional beat grid. With the grid on, a second ruler row below the time

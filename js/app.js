@@ -13,7 +13,7 @@
 import * as Wav from './wav.js';
 import { BeatGrid, TapTempo, snapSample, alignSample, psxavencSafeQuantum } from './grid.js';
 import { AudioEngine, LOOP_FORWARD } from './audio.js';
-import { WaveformView, buildPeaks, formatTime } from './waveform.js';
+import { WaveformView, buildPeaksAsync, formatTime } from './waveform.js';
 import * as Band from './band.js';
 
 var $ = function (id) { return document.getElementById(id); };
@@ -70,6 +70,58 @@ function clampLoop(L) {
   if (L.end < L.start + 1) L.end = Math.min(state.frames - 1, L.start + 1);
 }
 
+/* ---- busy overlay ------------------------------------------------------ */
+
+/*
+ * Shown only after SHOW_AFTER_MS, so a short file that loads instantly does
+ * not flash a spinner - a overlay that blinks on every small file trains you
+ * to ignore it.
+ *
+ * `fraction` may be null, which renders as an indeterminate sweep rather than
+ * a made-up percentage. decodeAudioData reports no progress at all (the API
+ * has no callback and the work happens off-thread), so the decode phase is
+ * honestly indeterminate; the waveform build afterwards is our own code and
+ * is a real fraction.
+ */
+var SHOW_AFTER_MS = 180;
+var busyTimer = null;
+
+function busyShow(phase, note) {
+  busySet(phase, null, note);
+  if (busyTimer || !$('busy').classList.contains('hidden')) return;
+  busyTimer = setTimeout(function () {
+    busyTimer = null;
+    $('busy').classList.remove('hidden');
+  }, SHOW_AFTER_MS);
+}
+
+function busySet(phase, fraction, note) {
+  if (phase !== undefined && phase !== null) $('busyphase').textContent = phase;
+  // `fraction` is accepted and deliberately not rendered as a bar. It still
+  // drives the note, so the waveform build shows a percentage in text without
+  // a second progress widget to maintain.
+  if (note !== undefined) $('busynote').textContent = note || '';
+}
+
+function busyHide() {
+  if (busyTimer) { clearTimeout(busyTimer); busyTimer = null; }
+  $('busy').classList.add('hidden');
+}
+
+/* Let the browser paint before starting a blocking stretch. Without this the
+ * overlay is only made visible in the DOM and never actually drawn. */
+function paint() {
+  return new Promise(function (r) {
+    requestAnimationFrame(function () { requestAnimationFrame(function () { r(); }); });
+  });
+}
+
+function prettySize(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(0) + ' KB';
+  return (n / 1048576).toFixed(1) + ' MB';
+}
+
 /* ---- source loading ---------------------------------------------------- */
 
 function looksLikeRiff(buf) {
@@ -80,21 +132,33 @@ function looksLikeRiff(buf) {
 
 async function loadFile(file) {
   status('Reading ' + file.name + '...');
-  var buf = await file.arrayBuffer();
-  await engine.init();
-
+  busyShow('Reading ' + file.name, prettySize(file.size));
   try {
+    var buf = await file.arrayBuffer();
+    await engine.init();
+
     if (looksLikeRiff(buf)) {
+      // Our own parser, and fast - but a very large WAV still takes a moment,
+      // so the overlay is not gated on the format. Naoki asked for it on
+      // conversions; a 40-minute WAV deserves it just as much.
+      busySet('Reading WAV', null, prettySize(file.size));
+      await paint();
       await loadWav(file.name, buf);
     } else {
+      var ext = (/\.([a-z0-9]+)$/i.exec(file.name) || [, 'audio'])[1].toLowerCase();
+      busySet('Decoding ' + ext.toUpperCase(), null,
+        'the browser reports no progress for this step');
+      await paint();
       await loadDecoded(file.name, buf);
     }
+    await afterLoad();
   } catch (err) {
     console.error(err);
     status('Could not load ' + file.name + ': ' + err.message, 'err');
     return;
+  } finally {
+    busyHide();
   }
-  afterLoad();
 }
 
 async function loadWav(name, buf) {
@@ -122,8 +186,59 @@ async function loadWav(name, buf) {
   }
 }
 
+/*
+ * Decode on a THROWAWAY OfflineAudioContext, never on the playback context.
+ *
+ * The playback AudioContext is suspended until a user gesture starts it, and
+ * a decode issued on a suspended context does not reliably call back - on
+ * macOS Safari it simply never resolves. The symptom is vicious: the first
+ * non-WAV file appears to hang forever, and then loading a SECOND file
+ * supplies a fresh gesture, the context starts, and the stalled first decode
+ * completes. It looks like a race, it is actually a decode waiting on an
+ * unrelated event. WAV never showed it because our own parser never touches
+ * the context.
+ *
+ * An OfflineAudioContext is not subject to the autoplay policy and needs no
+ * gesture, so the decode is independent of playback state entirely.
+ *
+ * The known cost, stated rather than hidden: decodeAudioData resamples to the
+ * decoding context's rate, so a non-WAV file is resampled on import. There is
+ * no way to learn a compressed file's native rate without decoding it first.
+ */
+function makeDecoder() {
+  var Off = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (Off) {
+    var rate = (engine.ctx && engine.ctx.sampleRate) || 44100;
+    try { return new Off(1, 1, rate); } catch (e) { /* fall through */ }
+  }
+  return engine.ctx;   // last resort; the original behaviour
+}
+
+function decodeWithTimeout(ctx, buf, ms) {
+  // A decode that never settles must not present as an eternal spinner. If
+  // this fires it is a bug worth reporting, so say so rather than failing
+  // vaguely.
+  return new Promise(function (resolve, reject) {
+    var settled = false;
+    var timer = setTimeout(function () {
+      if (settled) return;
+      settled = true;
+      reject(new Error('the decoder did not respond within ' + Math.round(ms / 1000) +
+        's - this is a bug, please say which format and browser'));
+    }, ms);
+    var done = function (b) { if (settled) return; settled = true; clearTimeout(timer); resolve(b); };
+    var fail = function (e) {
+      if (settled) return; settled = true; clearTimeout(timer);
+      reject(e || new Error('the browser could not decode this file'));
+    };
+    // Both the promise and the callback forms - older Safari only has the latter.
+    var r = ctx.decodeAudioData(buf, done, fail);
+    if (r && typeof r.then === 'function') r.then(done, fail);
+  });
+}
+
 async function loadDecoded(name, buf) {
-  var audio = await engine.ctx.decodeAudioData(buf.slice(0));
+  var audio = await decodeWithTimeout(makeDecoder(), buf.slice(0), 120000);
   var chans = [];
   for (var c = 0; c < audio.numberOfChannels; c++) chans.push(audio.getChannelData(c));
   state.name = name;
@@ -136,12 +251,17 @@ async function loadDecoded(name, buf) {
   state.nextId = 1;
 }
 
-function afterLoad() {
+async function afterLoad() {
   grid.setSampleRate(state.sampleRate);
   engine.setSource(state.channels, state.sampleRate);
   engine.setGrid(grid);
 
-  var peaks = buildPeaks(state.channels);
+  busySet('Building waveform', 0,
+    state.frames.toLocaleString() + ' frames x ' + state.channels.length + ' ch');
+  await paint();
+  var peaks = await buildPeaksAsync(state.channels, function (f) {
+    busySet(null, f, Math.round(f * 100) + '%');
+  });
   view.setSource(state.channels, peaks, state.sampleRate);
   view.loops = state.loops;
   view.selected = state.loops.length ? 0 : -1;
@@ -496,6 +616,11 @@ function frame() {
 /* ---- wiring ------------------------------------------------------------ */
 
 $('file').addEventListener('change', function (ev) {
+  // Kick the context here, synchronously inside the gesture. Awaiting a file
+  // read first and only then calling init() spends the user activation, and
+  // resume() on a blocked context stays pending indefinitely rather than
+  // rejecting.
+  engine.init();
   if (ev.target.files && ev.target.files[0]) loadFile(ev.target.files[0]);
 });
 
@@ -793,4 +918,9 @@ status('Ready. Open a .wav (or drop one anywhere) to start.');
  * guessing a position instead produced a test that grabbed the loop BODY and
  * still reported a passing "dragged the start handle" check.
  */
-window.__loopeditor = { state: state, view: view, engine: engine, grid: grid, Wav: Wav };
+window.__loopeditor = {
+  state: state, view: view, engine: engine, grid: grid, Wav: Wav,
+  // Exposed so the decode test can exercise the actual mechanism: that
+  // decoding uses a context independent of playback.
+  makeDecoder: makeDecoder, decodeWithTimeout: decodeWithTimeout
+};

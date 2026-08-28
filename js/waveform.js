@@ -42,6 +42,71 @@ export function buildPeaks(channels) {
   return out;
 }
 
+/*
+ * Same pyramid, built in slices so the page can paint between them.
+ *
+ * The synchronous version above blocks the main thread for the whole build,
+ * which on a long file means the loading overlay cannot animate its progress
+ * and the window is frozen - the exact thing an overlay exists to avoid. This
+ * yields whenever it has held the thread for longer than a frame, and reports
+ * a real 0..1 fraction rather than a fake one.
+ *
+ * Only the base level is chunked: the reductions above it are cheap (half the
+ * work of the level below, geometrically), so they run in one go at the end.
+ */
+export async function buildPeaksAsync(channels, onProgress) {
+  var out = [];
+  var totalBuckets = 0;
+  for (var c0 = 0; c0 < channels.length; c0++) {
+    totalBuckets += Math.ceil(channels[c0].length / BASE_BUCKET);
+  }
+  if (!totalBuckets) return buildPeaks(channels);
+  var done = 0;
+  var lastYield = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+  for (var c = 0; c < channels.length; c++) {
+    var data = channels[c];
+    var n = Math.ceil(data.length / BASE_BUCKET);
+    var mn = new Float32Array(n), mx = new Float32Array(n);
+
+    for (var i = 0; i < n; i++) {
+      var s = i * BASE_BUCKET, e = Math.min(s + BASE_BUCKET, data.length);
+      var lo = Infinity, hi = -Infinity;
+      for (var j = s; j < e; j++) { var v = data[j]; if (v < lo) lo = v; if (v > hi) hi = v; }
+      if (lo === Infinity) { lo = 0; hi = 0; }
+      mn[i] = lo; mx[i] = hi;
+      done++;
+
+      // Check the clock every 256 buckets rather than every one: calling
+      // performance.now() per bucket is itself a measurable cost here.
+      if ((i & 255) === 0) {
+        var now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        if (now - lastYield > 12) {
+          if (onProgress) onProgress(done / totalBuckets);
+          await new Promise(function (r) { setTimeout(r, 0); });
+          lastYield = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        }
+      }
+    }
+
+    var levels = [{ bucket: BASE_BUCKET, min: mn, max: mx }];
+    while (levels[levels.length - 1].min.length > 2) {
+      var prev = levels[levels.length - 1];
+      var m = Math.ceil(prev.min.length / 2);
+      var pmn = new Float32Array(m), pmx = new Float32Array(m);
+      for (var k = 0; k < m; k++) {
+        var a = k * 2, b = Math.min(a + 1, prev.min.length - 1);
+        pmn[k] = Math.min(prev.min[a], prev.min[b]);
+        pmx[k] = Math.max(prev.max[a], prev.max[b]);
+      }
+      levels.push({ bucket: prev.bucket * 2, min: pmn, max: pmx });
+    }
+    out.push(levels);
+  }
+  if (onProgress) onProgress(1);
+  return out;
+}
+
 var RULER_H = 22;       // time ruler
 var BAR_RULER_H = 17;   // bar ruler, only present when the grid is on
 var HANDLE_PX = 6;      // grab radius for a loop edge
