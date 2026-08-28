@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loop Point Editor</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230d1117'/%3E%3Cpath d='M2 8h1.5l1-4 1.5 8 1.5-6 1 4 1-2h4' stroke='%234fd08a' fill='none' stroke-width='1.2'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header>
+  <h1>Loop Point Editor</h1>
+  <div class="fileio">
+    <label class="btn">Open<input type="file" id="file" accept="audio/*,.wav,.wave"></label>
+    <button class="btn" id="export" disabled>Export .wav</button>
+    <span id="filename" class="filename">no file loaded</span>
+  </div>
+  <div id="fileinfo" class="fileinfo"></div>
+</header>
+
+<main>
+  <div class="viewarea">
+    <canvas id="wave"></canvas>
+    <canvas id="overview"></canvas>
+    <div class="viewbar">
+      <button class="btn sm" id="zoomout" title="Zoom out (-)">&minus;</button>
+      <button class="btn sm" id="zoomin" title="Zoom in (+)">+</button>
+      <button class="btn sm" id="fit" title="Fit whole file (0)">fit</button>
+      <button class="btn sm" id="zoomloop" title="Zoom to selected loop">loop</button>
+      <span class="spacer"></span>
+      <span class="readout" id="cursorinfo"></span>
+    </div>
+  </div>
+
+  <aside class="panel">
+
+    <section>
+      <h2>Transport</h2>
+      <div class="row">
+        <button class="btn wide" id="play">Play</button>
+        <button class="btn" id="rewind" title="Back to start">&#124;&lt;</button>
+      </div>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="loopon"> Loop playback</label>
+      </div>
+      <div class="row">
+        <label class="lbl">Volume</label>
+        <input type="range" id="volume" min="0" max="1.5" step="0.01" value="1">
+      </div>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="follow" checked> Follow playhead</label>
+      </div>
+    </section>
+
+    <section>
+      <h2>Loops</h2>
+      <div class="row">
+        <button class="btn" id="addloop">Add</button>
+        <button class="btn" id="delloop" disabled>Delete</button>
+        <button class="btn" id="loopfromview" title="New loop spanning the visible range">From view</button>
+      </div>
+      <ul id="looplist" class="looplist"></ul>
+      <div id="loopedit" class="loopedit hidden">
+        <div class="row">
+          <label class="lbl">Type</label>
+          <select id="looptype">
+            <option value="0">forward</option>
+            <option value="1">alternating (ping-pong)</option>
+            <option value="2">backward</option>
+          </select>
+        </div>
+        <div class="row">
+          <label class="lbl">Start</label>
+          <input type="number" id="loopstart" step="1" min="0">
+          <button class="btn sm" id="starthere" title="Set to playhead (S)">&#9679;</button>
+        </div>
+        <div class="row sub"><span id="startinfo" class="readout"></span></div>
+        <div class="row">
+          <label class="lbl">End</label>
+          <input type="number" id="loopend" step="1" min="0">
+          <button class="btn sm" id="endhere" title="Set to playhead (E)">&#9679;</button>
+        </div>
+        <div class="row sub"><span id="endinfo" class="readout"></span></div>
+        <div class="row sub"><span id="lengthinfo" class="readout"></span></div>
+      </div>
+    </section>
+
+    <section>
+      <h2>Snapping</h2>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="snapgrid"> Snap to beat grid</label>
+      </div>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="alignon" checked> Align to multiples of</label>
+      </div>
+      <div class="row indent">
+        <input type="number" id="alignq" value="28" min="1" step="1">
+        <span class="unit">samples</span>
+        <select id="alignpreset">
+          <option value="">preset...</option>
+          <option value="28">28 (PS1 SPU ADPCM block)</option>
+          <option value="" id="presetsafe">1764 (block-aligned and whole-ms, survives psxavenc)</option>
+          <option value="16">16</option>
+          <option value="256">256</option>
+          <option value="1">1 (off)</option>
+        </select>
+      </div>
+      <p class="note">Alignment is applied after grid snap, so an aligned point
+      can sit slightly off the beat. Hold <kbd>Alt</kbd> while dragging to bypass both.</p>
+      <p class="note" id="safenote"></p>
+    </section>
+
+    <section>
+      <h2>Beat grid</h2>
+      <div class="row">
+        <label class="check"><input type="checkbox" id="gridon"> Show grid</label>
+        <label class="check"><input type="checkbox" id="metro"> Metronome</label>
+      </div>
+      <div class="row">
+        <label class="lbl">BPM</label>
+        <input type="number" id="bpm" value="120" min="10" max="400" step="0.001">
+        <button class="btn sm" id="tap" title="Tap four or more times">Tap</button>
+      </div>
+      <div class="row sub"><span id="tapinfo" class="readout"></span></div>
+      <div class="row">
+        <label class="lbl">Offset</label>
+        <input type="number" id="gridoffset" value="0" step="1">
+        <span class="unit">smp</span>
+      </div>
+      <div class="row indent">
+        <button class="btn sm" id="nudgeminus10">&laquo;</button>
+        <button class="btn sm" id="nudgeminus">&lsaquo;</button>
+        <button class="btn sm" id="nudgeplus">&rsaquo;</button>
+        <button class="btn sm" id="nudgeplus10">&raquo;</button>
+        <button class="btn sm" id="gridhere" title="Put beat 1 at the playhead">at playhead</button>
+      </div>
+      <div class="row">
+        <label class="lbl">Divisions</label>
+        <select id="subdiv">
+          <option value="1">1 / beat</option>
+          <option value="2">2 / beat</option>
+          <option value="3">3 / beat</option>
+          <option value="4">4 / beat</option>
+          <option value="6">6 / beat</option>
+          <option value="8">8 / beat</option>
+        </select>
+      </div>
+      <div class="row">
+        <label class="lbl">Beats/bar</label>
+        <input type="number" id="beatsbar" value="4" min="1" max="32" step="1">
+      </div>
+      <div class="row">
+        <label class="lbl">Click vol</label>
+        <input type="range" id="metrovol" min="0" max="1" step="0.01" value="0.35">
+      </div>
+    </section>
+
+    <section>
+      <h2>Export</h2>
+      <p class="note" id="exportnote">Writes the loops back as a <code>smpl</code> chunk.
+      For a WAV source every other chunk is copied through byte for byte.</p>
+      <button class="btn wide" id="export2" disabled>Export .wav</button>
+    </section>
+
+  </aside>
+</main>
+
+<footer>
+  <span id="status">Ready.</span>
+  <span class="spacer"></span>
+  <span id="backend" class="readout"></span>
+  <button class="btn sm" id="help">?</button>
+</footer>
+
+<div id="helpbox" class="helpbox hidden">
+  <h3>Keys and mouse</h3>
+  <table>
+    <tr><td><kbd>Space</kbd></td><td>play / stop</td></tr>
+    <tr><td><kbd>L</kbd></td><td>toggle loop playback</td></tr>
+    <tr><td><kbd>S</kbd> / <kbd>E</kbd></td><td>set selected loop start / end to the playhead</td></tr>
+    <tr><td><kbd>A</kbd></td><td>add a loop at the playhead</td></tr>
+    <tr><td><kbd>Del</kbd></td><td>delete the selected loop</td></tr>
+    <tr><td><kbd>T</kbd></td><td>tap tempo</td></tr>
+    <tr><td><kbd>M</kbd></td><td>toggle metronome</td></tr>
+    <tr><td><kbd>Home</kbd></td><td>rewind to start</td></tr>
+    <tr><td><kbd>+</kbd> <kbd>-</kbd> <kbd>0</kbd></td><td>zoom in / out / fit</td></tr>
+    <tr><td><kbd>&larr;</kbd> <kbd>&rarr;</kbd></td><td>scroll (hold <kbd>Shift</kbd> for a page)</td></tr>
+    <tr><td>wheel</td><td>zoom at the cursor</td></tr>
+    <tr><td><kbd>Shift</kbd>+wheel</td><td>scroll</td></tr>
+    <tr><td>drag edge</td><td>move a loop point</td></tr>
+    <tr><td>drag inside</td><td>move the whole loop</td></tr>
+    <tr><td>middle drag</td><td>pan</td></tr>
+    <tr><td><kbd>Alt</kbd>+drag</td><td>ignore snapping</td></tr>
+  </table>
+  <button class="btn sm" id="helpclose">close</button>
+</div>
+
+<div id="drop" class="drop hidden">Drop an audio file</div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
