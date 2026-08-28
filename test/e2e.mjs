@@ -148,20 +148,40 @@ check('dragging the start handle left the end alone', endAfter === endBefore,
   'end ' + endBefore + ' -> ' + endAfter);
 check('dragged start landed on a 28-sample boundary', startAfter % 28 === 0, String(startAfter));
 
-// Now the body drag, which must move both ends by the same amount.
+// Now the body drag. It requires shift: a plain drag inside a loop moves the
+// playhead instead, which is checked separately below.
 const bodyX = (await handleX('start') + await handleX('end')) / 2;
 const s0 = parseInt(await page.inputValue('#loopstart'), 10);
 const e0 = parseInt(await page.inputValue('#loopend'), 10);
+await page.keyboard.down('Shift');
 await page.mouse.move(box.x + bodyX, midY);
 await page.mouse.down();
 await page.mouse.move(box.x + bodyX + 40, midY, { steps: 6 });
 await page.mouse.up();
+await page.keyboard.up('Shift');
 await page.waitForTimeout(80);
 const s1 = parseInt(await page.inputValue('#loopstart'), 10);
 const e1 = parseInt(await page.inputValue('#loopend'), 10);
 check('body drag moved the loop', s1 !== s0, s0 + ' -> ' + s1);
 check('body drag preserved the loop length', (e1 - s1) === (e0 - s0),
   'len ' + (e0 - s0 + 1) + ' -> ' + (e1 - s1 + 1));
+
+// And the bug spicyjpeg reported: a plain drag inside a loop body must move
+// the playhead, not the loop. Without this the fix has no oracle at all.
+const s2 = parseInt(await page.inputValue('#loopstart'), 10);
+const headBefore = await page.evaluate(() => window.__loopeditor.view.playhead);
+const insideX = (await handleX('start') + await handleX('end')) / 2;
+await page.mouse.move(box.x + insideX, midY);
+await page.mouse.down();
+await page.mouse.move(box.x + insideX + 30, midY, { steps: 5 });
+await page.mouse.up();
+await page.waitForTimeout(80);
+const headAfter = await page.evaluate(() => window.__loopeditor.view.playhead);
+check('plain drag inside a loop moves the playhead', headAfter !== headBefore,
+  headBefore + ' -> ' + headAfter);
+check('plain drag inside a loop leaves the loop alone',
+  parseInt(await page.inputValue('#loopstart'), 10) === s2,
+  s2 + ' -> ' + (await page.inputValue('#loopstart')));
 
 // Restore the fixture's own loop exactly, so the export check below compares
 // against known numbers rather than whatever the drags happened to leave.

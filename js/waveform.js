@@ -439,6 +439,11 @@ export class WaveformView {
         return;
       }
       var hit = self.hitTest(x);
+      // A loop body must NOT swallow the click: inside a long loop that would
+      // make the playhead unreachable exactly where you most want to place it.
+      // Edges still grab on a plain drag - they are a 6px target, not a
+      // region - and moving the whole loop is shift+drag.
+      if (hit && hit.edge === 'body' && !ev.shiftKey) hit = null;
       if (hit && ev.button === 0) {
         if (self.onSelect) self.onSelect(hit.loop);
         if (hit.edge === 'body') {
@@ -464,7 +469,7 @@ export class WaveformView {
         var hit = self.hitTest(x);
         var cur = 'default';
         if (hit && hit.edge !== 'body') cur = 'ew-resize';
-        else if (hit) cur = 'grab';
+        else if (hit && ev.shiftKey) cur = 'grab';   // body only grabs with shift
         if (self.canvas.style.cursor !== cur) self.canvas.style.cursor = cur;
         return;
       }

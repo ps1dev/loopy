@@ -96,8 +96,8 @@ export class AudioEngine {
     }
     if (this.grid) {
       core.gridOffset = this.grid.offset;
-      core.samplesPerDivision = this.grid.samplesPerDivision;
-      core.subdivision = this.grid.subdivision;
+      // Beats, not divisions: the divisions control is grid density only.
+      core.samplesPerBeat = this.grid.samplesPerBeat;
       core.beatsPerBar = this.grid.beatsPerBar;
     }
     if (reconcile) core.reconcile();

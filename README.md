@@ -31,14 +31,19 @@ and an optional beat grid. Zoom runs from the whole file down to individual
 samples with the sample dots drawn. Drawing uses a peak pyramid built once on
 load, so scrubbing a long file stays responsive.
 
-**Loops.** Add, delete, select, drag either edge, or drag the whole region.
+**Loops.** Add, delete, select, drag either edge, or <kbd>Shift</kbd>-drag the
+whole region. A plain drag always moves the playhead, including inside a loop -
+a loop body that swallowed clicks made the playhead unreachable exactly where
+you most want to place it.
 Edit start and end numerically. Each loop carries a `smpl` loop type: forward,
 alternating (ping-pong) or backward. Playback honours all three.
 
 **Beat grid.** Adjustable BPM, subdivisions, beats per bar, and an offset in
 samples with 1 ms and 10 ms nudge buttons plus "at playhead". Tap tempo. A
 metronome that is generated inside the playback loop from the same sample
-clock, so it cannot drift from the audio or be left behind by a loop jump.
+clock, so it cannot drift from the audio or be left behind by a loop jump. It
+ticks on *beats*: the subdivisions setting is grid density only, and the player
+has no subdivision input at all, so it cannot reach the click.
 
 **Snapping.** Snap to the beat grid, force loop points to a multiple of N
 samples, or both. The default is 28, the PS1 SPU's ADPCM block size. Hold
@@ -118,7 +123,10 @@ belongs upstream.
 | <kbd>+</kbd> <kbd>-</kbd> <kbd>0</kbd> | zoom in / out / fit |
 | <kbd>&larr;</kbd> <kbd>&rarr;</kbd> | scroll, <kbd>Shift</kbd> for a page |
 | wheel | zoom at the cursor; <kbd>Shift</kbd>+wheel scrolls |
-| drag edge / inside / middle | move a point / move the loop / pan |
+| drag | move the playhead, anywhere |
+| drag edge | move a loop point |
+| <kbd>Shift</kbd>+drag inside | move the whole loop |
+| middle drag | pan |
 
 ## Playback
 

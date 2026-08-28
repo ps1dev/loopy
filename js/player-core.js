@@ -49,10 +49,13 @@ export class PlayerCore {
     this.metronome = false;
     this.metroGain = 0.35;
     this.gridOffset = 0;
-    this.samplesPerDivision = 0;
-    this.subdivision = 1;
+    // Ticks follow BEATS, never grid divisions. The divisions control is a
+    // visual density setting for the grid; wiring it to the click turned
+    // "show me sixteenths" into a machine-gun metronome. Subdivision is not a
+    // field here at all, so it structurally cannot reach the click.
+    this.samplesPerBeat = 0;
     this.beatsPerBar = 4;
-    this._lastDivision = null;
+    this._lastBeat = null;
     this._clickPos = -1;        // frames into the current click, -1 = idle
     this._clickLen = 0;
     this._clickFreq = 1200;
@@ -68,7 +71,7 @@ export class PlayerCore {
     this.position = 0;
     this.direction = 1;
     this.playing = false;
-    this._lastDivision = null;
+    this._lastBeat = null;
   }
 
   get step() { return this.sourceRate / this.outputRate; }
@@ -85,7 +88,7 @@ export class PlayerCore {
   seek(sample) {
     this.position = Math.max(0, Math.min(sample, this.frames));
     this.direction = (this.loopType === LOOP_BACKWARD && this.loopActive) ? -1 : 1;
-    this._lastDivision = null;
+    this._lastBeat = null;
   }
 
   play(fromSample) {
@@ -109,7 +112,7 @@ export class PlayerCore {
     if (this.position < lo || this.position >= hi) {
       this.position = (this.loopType === LOOP_BACKWARD) ? hi - 1 : lo;
       this.direction = (this.loopType === LOOP_BACKWARD) ? -1 : 1;
-      this._lastDivision = null;
+      this._lastBeat = null;
     }
   }
 
@@ -178,14 +181,13 @@ export class PlayerCore {
   }
 
   _metroTick() {
-    if (!this.metronome || !(this.samplesPerDivision > 1)) return;
-    var d = Math.floor((this.position - this.gridOffset) / this.samplesPerDivision);
-    if (this._lastDivision === null) { this._lastDivision = d; return; }
-    if (d === this._lastDivision) return;
-    this._lastDivision = d;
+    if (!this.metronome || !(this.samplesPerBeat > 1)) return;
+    var d = Math.floor((this.position - this.gridOffset) / this.samplesPerBeat);
+    if (this._lastBeat === null) { this._lastBeat = d; return; }
+    if (d === this._lastBeat) return;
+    this._lastBeat = d;
 
-    var sub = Math.max(1, this.subdivision);
-    var perBar = sub * Math.max(1, this.beatsPerBar);
+    var perBar = Math.max(1, this.beatsPerBar);
     var accent = (((d % perBar) + perBar) % perBar) === 0;
     this._clickPos = 0;
     this._clickLen = Math.round(this.outputRate * 0.035);

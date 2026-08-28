@@ -492,8 +492,7 @@ test('the metronome fires once per grid division and accents the bar', () => {
   core.outputRate = 44100;
   core.metronome = true;
   core.gridOffset = 0;
-  core.samplesPerDivision = 500;
-  core.subdivision = 1;
+  core.samplesPerBeat = 500;
   core.beatsPerBar = 4;
   core.gain = 0;                   // isolate the click from the source
   core.play(0);
@@ -507,7 +506,28 @@ test('the metronome fires once per grid division and accents the bar', () => {
     if (out[0][i] !== 0 && out[0][i - 1] === 0) onsets.push(i);
   }
   assert.deepEqual(onsets, [501, 1001, 1501],
-    'expected one click just after each of the divisions at 500/1000/1500');
+    'expected one click just after each of the beats at 500/1000/1500');
+});
+
+test('the metronome has no subdivision input to be affected by', () => {
+  // The grid's divisions control must not reach the click. Rather than assert
+  // that setting it changes nothing - which passes just as well if the wiring
+  // is merely broken today - check the coupling cannot exist: the player has
+  // no subdivision field, and ticks are driven only by samplesPerBeat.
+  const core = new PlayerCore();
+  assert.equal('subdivision' in core, false, 'PlayerCore regained a subdivision field');
+  core.setSource(ramp(4000), 44100);
+  core.outputRate = 44100;
+  core.metronome = true;
+  core.samplesPerBeat = 1000;
+  core.beatsPerBar = 4;
+  core.gain = 0;
+  core.play(0);
+  const out = [new Float32Array(3500)];
+  core.render(out, 3500);
+  const onsets = [];
+  for (let i = 1; i < 3500; i++) if (out[0][i] !== 0 && out[0][i - 1] === 0) onsets.push(i);
+  assert.deepEqual(onsets, [1001, 2001, 3001], 'clicks should land on beats only');
 });
 
 test('the metronome stays silent when it is switched off', () => {
@@ -515,7 +535,7 @@ test('the metronome stays silent when it is switched off', () => {
   core.setSource(ramp(4000), 44100);
   core.outputRate = 44100;
   core.metronome = false;
-  core.samplesPerDivision = 500;
+  core.samplesPerBeat = 500;
   core.gain = 0;
   core.play(0);
   const out = [new Float32Array(2000)];
