@@ -397,7 +397,9 @@ function updateLoopReadouts() {
       : '<span class="warn">' + lenOff + ' samples past a multiple of ' + q + '</span>');
   }
   if (grid.enabled) {
-    var beats = len / grid.samplesPerBeat;
+    // Integrated across tempo changes; a plain divide is wrong once the
+    // map has more than one entry, and wrong silently.
+    var beats = grid.beatsBetween(L.start, L.end + 1);
     lenTxt += ' &middot; ' + beats.toFixed(3) + ' beats';
   }
   $('lengthinfo').innerHTML = 'Length: ' + lenTxt;
@@ -586,7 +588,10 @@ function updateCursorInfo() {
   if (!state.frames) { $('cursorinfo').textContent = ''; return; }
   var p = view.playhead;
   var txt = p.toLocaleString() + ' smp  ' + formatTime(p / state.sampleRate);
-  if (grid.enabled) txt += '   bar ' + grid.positionLabel(p);
+  if (grid.enabled) {
+    txt += '   bar ' + grid.positionLabel(p);
+    if (grid.hasTempoChanges) txt += ' @ ' + grid.bpmAt(p) + ' BPM';
+  }
   var spp = view.viewLength / (view.cssWidth || 1);
   txt += '   ' + (spp < 1 ? (1 / spp).toFixed(1) + ' px/smp' : spp.toFixed(1) + ' smp/px');
   $('cursorinfo').textContent = txt;
@@ -808,6 +813,96 @@ $('alignpreset').addEventListener('change', function () {
   updateLoopReadouts();
 });
 
+/* ---- tempo map editor -------------------------------------------------- */
+
+/*
+ * One row per tempo change. Row 0 is the song's starting tempo: it is pinned
+ * to bar 1 and cannot be deleted, because the map has to cover the song from
+ * the beginning - a map starting at bar 6 would leave bars 1-5 with no tempo
+ * at all. Its BPM lives in the main field above rather than being duplicated
+ * here, so there is one place to edit it.
+ */
+function renderTempoList() {
+  var ul = $('tempolist');
+  var list = grid.tempos;
+  ul.innerHTML = '';
+
+  for (var i = 1; i < list.length; i++) {
+    (function (idx) {
+      var t = list[idx];
+      var li = document.createElement('li');
+
+      var lbl = document.createElement('span');
+      lbl.className = 'tl-lbl';
+      lbl.textContent = 'bar';
+      var bar = document.createElement('input');
+      bar.type = 'number'; bar.min = '2'; bar.step = '1'; bar.value = t.bar;
+      var at = document.createElement('span');
+      at.className = 'tl-lbl';
+      at.textContent = '\u2192';
+      var bpm = document.createElement('input');
+      bpm.type = 'number'; bpm.min = '10'; bpm.max = '400'; bpm.step = '0.001'; bpm.value = t.bpm;
+      var unit = document.createElement('span');
+      unit.className = 'tl-lbl';
+      unit.textContent = 'BPM';
+      var del = document.createElement('button');
+      del.className = 'tl-del'; del.title = 'Remove this tempo change';
+      del.innerHTML = '&times;';
+
+      var commit = function () {
+        var all = grid.tempos;
+        var b = parseInt(bar.value, 10);
+        var v = parseFloat(bpm.value);
+        if (b > 1) all[idx].bar = b;
+        if (v > 0) all[idx].bpm = v;
+        grid.setTempos(all);
+        afterGridEdit();
+      };
+      bar.addEventListener('change', commit);
+      bpm.addEventListener('change', commit);
+      del.addEventListener('click', function () {
+        grid.removeTempoAt(idx);
+        afterGridEdit();
+      });
+
+      li.appendChild(lbl); li.appendChild(bar); li.appendChild(at);
+      li.appendChild(bpm); li.appendChild(unit); li.appendChild(del);
+      ul.appendChild(li);
+    })(i);
+  }
+
+  $('tempocount').textContent = list.length > 1
+    ? (list.length - 1) + ' change' + (list.length === 2 ? '' : 's')
+      + ', ' + list[0].bpm + ' from bar 1'
+    : '';
+}
+
+/* Re-render and re-push after a change to the map itself, without going back
+ * through gridChanged() - that reads the BPM field, which would overwrite the
+ * first entry with a stale value while a row is being edited. */
+function afterGridEdit() {
+  $('bpm').value = grid.tempos[0].bpm;
+  engine.gridChanged();
+  renderTempoList();
+  updateLoopReadouts();
+  updateCursorInfo();
+  view.requestDraw();
+}
+
+$('addtempo').addEventListener('click', function () {
+  // Default the new change to the bar the playhead is in - that is almost
+  // always where you want it, and it is one fewer number to type.
+  var bar = grid.enabled
+    ? Math.max(2, Math.floor(grid.barAt(engine.positionSamples()) + 1e-9))
+    : 2;
+  var existing = grid.tempos;
+  for (var i = 0; i < existing.length; i++) if (existing[i].bar === bar) bar += 1;
+  grid.addTempo(bar, grid.tempos[grid.tempos.length - 1].bpm);
+  if (!$('gridon').checked) { $('gridon').checked = true; gridChanged(); }
+  afterGridEdit();
+  status('Tempo change added at bar ' + bar + '. Edit the bar or BPM in the list.');
+});
+
 function gridChanged(redrawList) {
   grid.bpm = parseFloat($('bpm').value) || 120;
   grid.offset = parseInt($('gridoffset').value, 10) || 0;
@@ -816,6 +911,7 @@ function gridChanged(redrawList) {
   grid.enabled = $('gridon').checked;
   view.showGrid = grid.enabled;
   engine.gridChanged();
+  renderTempoList();
   if (redrawList !== false) updateLoopReadouts();
   updateCursorInfo();
   view.requestDraw();

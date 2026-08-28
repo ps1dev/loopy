@@ -48,13 +48,17 @@ export class PlayerCore {
     // away from the audio or be left behind by a loop jump.
     this.metronome = false;
     this.metroGain = 0.35;
-    this.gridOffset = 0;
     // Ticks follow BEATS, never grid divisions. The divisions control is a
     // visual density setting for the grid; wiring it to the click turned
     // "show me sixteenths" into a machine-gun metronome. Subdivision is not a
     // field here at all, so it structurally cannot reach the click.
-    this.samplesPerBeat = 0;
-    this.beatsPerBar = 4;
+    //
+    // The tempo map arrives as a SEGMENT TABLE rather than one beat length,
+    // so a song that changes tempo clicks at the right rate on both sides of
+    // the change. Each entry: {sample, beat, spb, beatsPerBar}. Empty means
+    // no grid, and the metronome stays silent rather than guessing 120.
+    this.segments = [];
+    this._segIndex = 0;
     this._lastBeat = null;
     this._clickPos = -1;        // frames into the current click, -1 = idle
     this._clickLen = 0;
@@ -180,14 +184,30 @@ export class PlayerCore {
     }
   }
 
+  /* Segment covering the current position. Cached and nudged rather than
+   * searched: playback moves monotonically (or reverses, in a ping-pong
+   * loop), so this is O(1) per sample in the common case. A binary search per
+   * output sample would be pointless work in the audio callback. */
+  _segAt(pos) {
+    var g = this.segments;
+    var i = this._segIndex;
+    if (i >= g.length) i = g.length - 1;
+    while (i + 1 < g.length && pos >= g[i + 1].sample) i++;
+    while (i > 0 && pos < g[i].sample) i--;
+    this._segIndex = i;
+    return g[i];
+  }
+
   _metroTick() {
-    if (!this.metronome || !(this.samplesPerBeat > 1)) return;
-    var d = Math.floor((this.position - this.gridOffset) / this.samplesPerBeat);
+    if (!this.metronome || !this.segments.length) return;
+    var seg = this._segAt(this.position);
+    if (!(seg.spb > 1)) return;
+    var d = seg.beat + Math.floor((this.position - seg.sample) / seg.spb);
     if (this._lastBeat === null) { this._lastBeat = d; return; }
     if (d === this._lastBeat) return;
     this._lastBeat = d;
 
-    var perBar = Math.max(1, this.beatsPerBar);
+    var perBar = Math.max(1, seg.beatsPerBar);
     var accent = (((d % perBar) + perBar) % perBar) === 0;
     this._clickPos = 0;
     this._clickLen = Math.round(this.outputRate * 0.035);

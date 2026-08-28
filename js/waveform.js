@@ -430,7 +430,7 @@ export class WaveformView {
     ctx.moveTo(0, y0 + 0.5); ctx.lineTo(w, y0 + 0.5);
     ctx.stroke();
 
-    var pxPerBar = this.grid.samplesPerBar * this.cssWidth / this.viewLength;
+    var pxPerBar = this.grid.samplesPerBarAt(this.viewStart) * this.cssWidth / this.viewLength;
     if (!(pxPerBar > 0.5)) return;                 // too dense to mean anything
     var step = 1;
     while (pxPerBar * step < 44) step *= (step === 1 ? 2 : 2);
@@ -459,7 +459,7 @@ export class WaveformView {
     if (px >= -2 && px <= w + 2) {
       ctx.fillStyle = 'rgba(255,92,114,0.22)';
       var bs = this.sampleToX(this.grid.barStartAt(this.playhead));
-      var be = this.sampleToX(this.grid.barStartAt(this.playhead) + this.grid.samplesPerBar);
+      var be = this.sampleToX(this.grid.sampleOfBar(Math.floor(this.grid.barAt(this.playhead) + 1e-9) + 1));
       ctx.fillRect(bs, y0 + 1, Math.max(1, be - bs), h - 1);
     }
   }

@@ -298,3 +298,32 @@ kbd {
 
 /* No progress bar: decodeAudioData reports no progress at all, and a bar that
    is honest for one phase and a lie for the other is worse than a spinner. */
+
+/* Tempo map editor. One row per change; the first is the song's starting
+   tempo and cannot be moved off bar 1 or deleted, so its bar field is fixed. */
+.tempolist { list-style: none; margin: 4px 0 6px; padding: 0; }
+.tempolist li {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+}
+.tempolist li:nth-child(odd) { background: rgba(255,255,255,0.02); }
+.tempolist li.first { color: var(--dim); }
+.tempolist .tl-lbl { color: var(--dim); }
+.tempolist input[type=number] { width: 62px; padding: 2px 4px; font-size: 11px; }
+.tempolist .tl-del {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: var(--dim);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0 4px;
+}
+.tempolist .tl-del:hover { color: var(--red); }
+.tempolist .tl-del:disabled { opacity: 0.25; cursor: default; }

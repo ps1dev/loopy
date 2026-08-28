@@ -491,9 +491,7 @@ test('the metronome fires once per grid division and accents the bar', () => {
   core.setSource(ramp(4000), 44100);
   core.outputRate = 44100;
   core.metronome = true;
-  core.gridOffset = 0;
-  core.samplesPerBeat = 500;
-  core.beatsPerBar = 4;
+  core.segments = [{ sample: 0, beat: 0, spb: 500, beatsPerBar: 4 }];
   core.gain = 0;                   // isolate the click from the source
   core.play(0);
   const out = [new Float32Array(2000)];
@@ -519,8 +517,7 @@ test('the metronome has no subdivision input to be affected by', () => {
   core.setSource(ramp(4000), 44100);
   core.outputRate = 44100;
   core.metronome = true;
-  core.samplesPerBeat = 1000;
-  core.beatsPerBar = 4;
+  core.segments = [{ sample: 0, beat: 0, spb: 1000, beatsPerBar: 4 }];
   core.gain = 0;
   core.play(0);
   const out = [new Float32Array(3500)];
@@ -535,7 +532,7 @@ test('the metronome stays silent when it is switched off', () => {
   core.setSource(ramp(4000), 44100);
   core.outputRate = 44100;
   core.metronome = false;
-  core.samplesPerBeat = 500;
+  core.segments = [{ sample: 0, beat: 0, spb: 500, beatsPerBar: 4 }];
   core.gain = 0;
   core.play(0);
   const out = [new Float32Array(2000)];
@@ -718,4 +715,146 @@ test('the async builder actually yields, and reports monotonic progress', async 
 test('the async builder handles an empty source without dividing by zero', async () => {
   const out = await buildPeaksAsync([new Float32Array(0)]);
   assert.ok(Array.isArray(out));
+});
+
+/* ---- variable tempo ----------------------------------------------------- */
+
+test('a single-entry tempo map behaves exactly like a fixed grid', () => {
+  const g = new BeatGrid(44100);
+  g.bpm = 120; g.beatsPerBar = 4;
+  assert.equal(g.hasTempoChanges, false);
+  assert.equal(g.samplesPerBeatAt(0), 22050);
+  assert.equal(g.sampleOfBar(1), 0);
+  assert.equal(g.sampleOfBar(2), 88200);
+  assert.equal(g.beatAtSample(22050), 1);
+});
+
+test('tempo changes are keyed to bars and take effect there', () => {
+  // Naoki's case: 115 BPM for bars 1-5, 128 from bar 6.
+  const g = new BeatGrid(44100);
+  g.setTempos([{ bar: 1, bpm: 115, beatsPerBar: 4 }, { bar: 6, bpm: 128, beatsPerBar: 4 }]);
+  assert.equal(g.hasTempoChanges, true);
+
+  const spb115 = 44100 * 60 / 115;
+  const spb128 = 44100 * 60 / 128;
+  const bar6 = 5 * 4 * spb115;              // five bars of four beats at 115
+
+  assert.ok(Math.abs(g.sampleOfBar(6) - bar6) < 1e-6, 'bar 6 position');
+  assert.ok(Math.abs(g.samplesPerBeatAt(bar6 - 1) - spb115) < 1e-9, 'just before the change');
+  assert.ok(Math.abs(g.samplesPerBeatAt(bar6 + 1) - spb128) < 1e-9, 'just after the change');
+  assert.equal(g.bpmAt(0), 115);
+  assert.equal(g.bpmAt(bar6 + 1), 128);
+  // Bar 7 is one 128-bar past bar 6, not one 115-bar.
+  assert.ok(Math.abs(g.sampleOfBar(7) - (bar6 + 4 * spb128)) < 1e-6, 'bar 7 uses the new tempo');
+});
+
+test('bar/beat is derived from the absolute position, not integrated', () => {
+  // The trap spicyjpeg named: accumulating the current BPM per step drifts.
+  // A piecewise-linear lookup from a segment anchor cannot, so asking for a
+  // position far into the song must be exact, not approximately right.
+  const g = new BeatGrid(48000);
+  g.setTempos([
+    { bar: 1, bpm: 115, beatsPerBar: 4 },
+    { bar: 6, bpm: 128, beatsPerBar: 4 },
+    { bar: 200, bpm: 90, beatsPerBar: 4 }
+  ]);
+  for (const bar of [1, 2, 6, 7, 50, 199, 200, 201, 4000]) {
+    const s = g.sampleOfBar(bar);
+    assert.ok(Math.abs(g.barAt(s) - bar) < 1e-9,
+      'round trip failed at bar ' + bar + ': got ' + g.barAt(s));
+  }
+});
+
+test('the grid line spacing changes at the tempo change', () => {
+  const g = new BeatGrid(44100);
+  g.enabled = true;
+  g.setTempos([{ bar: 1, bpm: 60, beatsPerBar: 4 }, { bar: 3, bpm: 120, beatsPerBar: 4 }]);
+  // 60 BPM = 44100 samples/beat; 120 BPM = 22050. Bar 3 starts at beat 8.
+  const change = 8 * 44100;
+  const lines = g.linesIn(0, change + 44100 * 2, 10000).map(l => l.sample);
+  assert.ok(lines.includes(0) && lines.includes(44100), 'beats before the change');
+  assert.ok(lines.includes(change), 'a line exactly at the change');
+  assert.ok(lines.includes(change + 22050), 'the beat after the change is half as far');
+  assert.ok(!lines.includes(change + 44100 * 0.5 + 1), 'no stray lines');
+  // No duplicates at the seam - the segment either side must not both emit it.
+  assert.equal(new Set(lines).size, lines.length, 'duplicate line at a segment boundary');
+});
+
+test('bars after a tempo change are numbered continuously', () => {
+  const g = new BeatGrid(44100);
+  g.setTempos([{ bar: 1, bpm: 60, beatsPerBar: 4 }, { bar: 3, bpm: 120, beatsPerBar: 4 }]);
+  const bars = g.barsIn(0, g.sampleOfBar(6), 100);
+  // Bar 1 sits at sample 0, which is inside the requested range, so it is
+  // included - the first version of this expectation left it out and the code
+  // was right. What matters is that numbering runs 1..6 continuously rather
+  // than restarting at the tempo change in bar 3.
+  assert.deepEqual(bars.map(b => b.bar), [1, 2, 3, 4, 5, 6], 'bar numbers must not restart');
+});
+
+test('positionLabel reports the right bar across a change', () => {
+  const g = new BeatGrid(44100);
+  g.setTempos([{ bar: 1, bpm: 115, beatsPerBar: 4 }, { bar: 6, bpm: 128, beatsPerBar: 4 }]);
+  assert.match(g.positionLabel(g.sampleOfBar(1)), /^1\.1\./);
+  assert.match(g.positionLabel(g.sampleOfBar(6)), /^6\.1\./);
+  assert.match(g.positionLabel(g.sampleOfBar(9)), /^9\.1\./);
+});
+
+test('the map is kept sorted and always starts at bar 1', () => {
+  const g = new BeatGrid(44100);
+  g.setTempos([{ bar: 12, bpm: 90 }, { bar: 4, bpm: 150 }, { bar: 7, bpm: 100 }]);
+  const t = g.tempos;
+  assert.equal(t[0].bar, 1, 'the earliest entry must cover from bar 1');
+  assert.deepEqual(t.map(x => x.bar), [1, 7, 12]);
+  assert.equal(t[0].bpm, 150, 'the earliest entry keeps its tempo');
+});
+
+test('removing a change cannot remove the starting tempo', () => {
+  const g = new BeatGrid(44100);
+  g.setTempos([{ bar: 1, bpm: 115 }, { bar: 6, bpm: 128 }]);
+  g.removeTempoAt(0);
+  assert.equal(g.tempos.length, 2, 'entry 0 must survive');
+  g.removeTempoAt(1);
+  assert.equal(g.tempos.length, 1);
+  assert.equal(g.tempos[0].bpm, 115);
+});
+
+test('beatsBetween integrates across a tempo change', () => {
+  const g = new BeatGrid(44100);
+  g.setTempos([{ bar: 1, bpm: 60, beatsPerBar: 4 }, { bar: 3, bpm: 120, beatsPerBar: 4 }]);
+  // Bar 1 to bar 5 is 16 beats regardless of tempo; a naive
+  // (samples / samplesPerBeat) would give a different, wrong number.
+  const beats = g.beatsBetween(g.sampleOfBar(1), g.sampleOfBar(5));
+  assert.ok(Math.abs(beats - 16) < 1e-9, 'got ' + beats);
+});
+
+test('nearestLine picks the closer side of a tempo change', () => {
+  const g = new BeatGrid(44100);
+  g.enabled = true;
+  g.setTempos([{ bar: 1, bpm: 60, beatsPerBar: 4 }, { bar: 3, bpm: 120, beatsPerBar: 4 }]);
+  const change = 8 * 44100;
+  // Lines are 44100 apart before and 22050 after, so a point just past the
+  // change is nearer the following line than the preceding one.
+  assert.equal(g.nearestLine(change + 12000), change + 22050);
+  assert.equal(g.nearestLine(change + 3000), change);
+  assert.equal(g.nearestLine(change - 3000), change);
+});
+
+test('the metronome clicks at the new rate after a tempo change', () => {
+  const core = new PlayerCore();
+  core.setSource(ramp(6000), 44100);
+  core.outputRate = 44100;
+  core.metronome = true;
+  core.gain = 0;
+  // 1000 samples/beat until sample 3000, then 500.
+  core.segments = [
+    { sample: 0, beat: 0, spb: 1000, beatsPerBar: 4 },
+    { sample: 3000, beat: 3, spb: 500, beatsPerBar: 4 }
+  ];
+  core.play(0);
+  const out = [new Float32Array(6000)];
+  core.render(out, 6000);
+  const onsets = [];
+  for (let i = 1; i < 6000; i++) if (out[0][i] !== 0 && out[0][i - 1] === 0) onsets.push(i);
+  assert.deepEqual(onsets, [1001, 2001, 3001, 3501, 4001, 4501, 5001, 5501],
+    'clicks should be 1000 apart then 500 apart');
 });

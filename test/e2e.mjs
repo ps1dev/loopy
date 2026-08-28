@@ -210,7 +210,7 @@ async function clickAndRead(x) {
   return await page.evaluate(() => {
     const a = window.__loopeditor;
     const p = a.engine.positionSamples();
-    return { pos: p, nearest: a.grid.nearestLine(p), spb: a.grid.samplesPerBeat };
+    return { pos: p, nearest: a.grid.nearestLine(p), spb: a.grid.samplesPerBeatAt(p) };
   });
 }
 const midBeat = wbox.width * (1.5 / 6);      // a beat and a half in
@@ -237,7 +237,7 @@ await page.waitForTimeout(120);
 const rb = await page.locator('#wave').boundingBox();
 const geom = await page.evaluate(() => {
   const a = window.__loopeditor;
-  return { spBar: a.grid.samplesPerBar, rulerH: a.view.rulerHeight, barH: a.view.barRulerHeight };
+  return { spBar: a.grid.samplesPerBarAt(0), rulerH: a.view.rulerHeight, barH: a.view.barRulerHeight };
 });
 check('bar ruler appears when the grid is on', geom.barH > 0, JSON.stringify(geom));
 // 120 BPM / 4/4 at 44100 = 88200 samples per bar; the fixture is 132300

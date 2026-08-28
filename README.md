@@ -63,6 +63,17 @@ you most want to place it.
 Edit start and end numerically. Each loop carries a `smpl` loop type: forward,
 alternating (ping-pong) or backward. Playback honours all three.
 
+**Variable tempo.** The grid carries a tempo *map*, not one BPM: a list of
+changes each keyed to the bar it takes effect at. A song that runs 115 BPM for
+five bars and 128 from bar 6 is two entries, added with "+ tempo change".
+Grid lines, bar numbering, snapping and the metronome all follow it.
+
+Bar/beat position is derived from the absolute sample position by a
+piecewise-linear lookup against segment anchors - `anchor.beat + (pos -
+anchor.sample) / samplesPerBeat` - never by integrating the current tempo
+forward. Integrating drifts; a lookup cannot. The anchor table is rebuilt only
+when the map is edited, over a handful of segments rather than per sample.
+
 **Beat grid.** Adjustable BPM, subdivisions, beats per bar, and an offset in
 samples with 1 ms and 10 ms nudge buttons plus "at playhead". Tap tempo. A
 metronome that is generated inside the playback loop from the same sample

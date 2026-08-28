@@ -111,10 +111,10 @@ export class AudioEngine {
       core.loopType = L.type || LOOP_FORWARD;
     }
     if (this.grid) {
-      core.gridOffset = this.grid.offset;
-      // Beats, not divisions: the divisions control is grid density only.
-      core.samplesPerBeat = this.grid.samplesPerBeat;
-      core.beatsPerBar = this.grid.beatsPerBar;
+      // The whole tempo map, not one beat length: a song with a tempo change
+      // must click at the right rate on both sides of it.
+      core.segments = this.grid.enabled ? this.grid.segments() : [];
+      core._segIndex = 0;
     }
     if (reconcile) core.reconcile();
   }
