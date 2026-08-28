@@ -192,6 +192,44 @@ await page.dispatchEvent('#loopend', 'change');
 check('loop restored for export',
   (await page.inputValue('#loopstart')) === '8400' && (await page.inputValue('#loopend')) === '25199');
 
+console.log('\n[6b] the playhead snaps to the beat grid');
+await page.click('#fit');
+await page.fill('#bpm', '120');
+await page.dispatchEvent('#bpm', 'input');
+await page.check('#gridon');
+await page.check('#snapgrid');
+await page.waitForTimeout(120);
+const wbox = await page.locator('#wave').boundingBox();
+
+// Deliberately click BETWEEN grid lines. 120 BPM at 44100 is 22050 samples
+// per beat, and the fixture is 132300 frames = exactly 6 beats, so a click
+// near the middle of a beat cannot land on a line by luck.
+async function clickAndRead(x) {
+  await page.mouse.click(wbox.x + x, wbox.y + wbox.height * 0.6);
+  await page.waitForTimeout(80);
+  return await page.evaluate(() => {
+    const a = window.__loopeditor;
+    const p = a.engine.positionSamples();
+    return { pos: p, nearest: a.grid.nearestLine(p), spb: a.grid.samplesPerBeat };
+  });
+}
+const midBeat = wbox.width * (1.5 / 6);      // a beat and a half in
+let r = await clickAndRead(midBeat);
+check('snap on: playhead lands exactly on a grid line', r.pos === r.nearest,
+  'pos=' + r.pos + ' nearest=' + r.nearest);
+check('snap on: landed on a beat multiple', r.pos % r.spb === 0,
+  'pos=' + r.pos + ' spb=' + r.spb);
+
+// Negative arm: with snapping off the same click must NOT be forced onto a
+// line, or the check above is satisfied by a playhead that always snaps.
+await page.uncheck('#snapgrid');
+r = await clickAndRead(midBeat);
+check('snap off: playhead is free of the grid', r.pos !== r.nearest,
+  'pos=' + r.pos + ' nearest=' + r.nearest);
+await page.check('#snapgrid');
+await page.uncheck('#gridon');
+await page.waitForTimeout(80);
+
 console.log('\n[7] add a second loop and export');
 await page.click('#addloop');
 await page.waitForTimeout(60);

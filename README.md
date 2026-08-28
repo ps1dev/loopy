@@ -55,7 +55,10 @@ ticks on *beats*: the subdivisions setting is grid density only, and the player
 has no subdivision input at all, so it cannot reach the click.
 
 **Snapping.** Snap to the beat grid, force loop points to a multiple of N
-samples, or both. The default is 28, the PS1 SPU's ADPCM block size. Hold
+samples, or both. The playhead snaps to the grid too, on click and while
+scrubbing - but only to the grid, never to the sample-alignment quantum:
+alignment exists so a loop *length* is a whole number of ADPCM blocks, and a
+listening position has no such constraint. The default is 28, the PS1 SPU's ADPCM block size. Hold
 <kbd>Alt</kbd> while dragging to bypass.
 
 **Export.** Writes the loops back as a `smpl` chunk. For a WAV source every

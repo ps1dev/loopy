@@ -335,7 +335,19 @@ function deleteLoop() {
 
 view.onSelect = function (i) { if (i !== state.selected) selectLoop(i); };
 
-view.onSeek = function (sample) {
+/*
+ * The playhead snaps to the BEAT GRID only - never to the sample-alignment
+ * quantum. Alignment exists so a loop LENGTH is a whole number of ADPCM
+ * blocks; the playhead is a listening position and has no such constraint,
+ * and rounding it to 28-sample boundaries would fight the grid for no gain.
+ */
+view.onSeek = function (sample, mods) {
+  var bypass = mods && mods.alt;
+  if (!bypass && $('snapgrid').checked && grid.enabled) {
+    sample = grid.nearestLine(sample);
+  } else {
+    sample = Math.round(sample);
+  }
   engine.seekSamples(Math.max(0, Math.min(sample, state.frames)));
   view.playhead = engine.positionSamples();
   view.requestDraw();

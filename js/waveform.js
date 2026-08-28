@@ -67,7 +67,7 @@ export class WaveformView {
     this.hover = null;        // {loop, edge} under the cursor
 
     // Callbacks, wired by the app.
-    this.onSeek = null;             // (sample)
+    this.onSeek = null;             // (sample, modifiers)
     this.onDragPoint = null;        // (loopIndex, edge, sample, modifiers)
     this.onDragLoop = null;         // (loopIndex, deltaSamples, modifiers)
     this.onDragEnd = null;
@@ -457,7 +457,7 @@ export class WaveformView {
       }
       if (ev.button === 0) {
         self._drag = { kind: 'seek' };
-        if (self.onSeek) self.onSeek(Math.round(self.xToSample(x)));
+        if (self.onSeek) self.onSeek(self.xToSample(x), mods);
       }
     });
 
@@ -486,7 +486,10 @@ export class WaveformView {
         d.x = x;
         if (self.onDragLoop) self.onDragLoop(d.loop, dx, mods);
       } else if (d.kind === 'seek') {
-        if (self.onSeek) self.onSeek(Math.round(self.xToSample(x)));
+        // Scrubbing snaps too - a playhead that snaps on click but slides
+        // freely on drag is worse than one that never snaps, because the
+        // reported position then depends on how you happened to click.
+        if (self.onSeek) self.onSeek(self.xToSample(x), mods);
       }
     });
 
