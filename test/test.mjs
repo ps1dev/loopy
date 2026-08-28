@@ -542,3 +542,125 @@ test('the metronome stays silent when it is switched off', () => {
   core.render(out, 2000);
   assert.ok(out[0].every(v => v === 0), 'metronome produced sound while disabled');
 });
+
+/* ---- binary plist + .band metadata ------------------------------------- */
+
+import { parseBinaryPlist, isBinaryPlist } from '../js/bplist.js';
+import { readBandMetadata, describeBandMetadata, formatBpm, pickMetadataFile } from '../js/band.js';
+import fs from 'node:fs';
+
+/* Real GarageBand 10.4.14 files. Expected values are what Python's plistlib
+ * reported independently, and two of them are tempos Naoki set by hand in the
+ * app and told me before I looked - so the oracle is external twice over. */
+const BAND_FIXTURES = [
+  ['/tmp/band/Chemical Plant.band/Alternatives/000/MetaData.plist', 139.0],
+  ['/tmp/band2/Chemical Plant.band/Alternatives/000/MetaData.plist', 121.0],
+  ['/tmp/band3/Chemical Plant.band/Alternatives/000/MetaData.plist', 121.0]
+];
+const haveFixtures = BAND_FIXTURES.every(([p]) => fs.existsSync(p));
+
+function buf(path) {
+  const b = fs.readFileSync(path);
+  return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength);
+}
+
+test('isBinaryPlist rejects an XML plist and accepts a binary one', { skip: !haveFixtures }, () => {
+  assert.equal(isBinaryPlist(buf(BAND_FIXTURES[0][0])), true);
+  const xml = new TextEncoder().encode('<?xml version="1.0"?><plist></plist>');
+  assert.equal(isBinaryPlist(xml.buffer), false);
+});
+
+test('reads BeatsPerMinute out of real GarageBand projects', { skip: !haveFixtures }, () => {
+  for (const [path, expected] of BAND_FIXTURES) {
+    const m = readBandMetadata(buf(path));
+    assert.equal(m.bpm, expected, path);
+    assert.equal(typeof m.bpm, 'number');
+  }
+});
+
+test('reads time signature, key and rate', { skip: !haveFixtures }, () => {
+  const m = readBandMetadata(buf(BAND_FIXTURES[1][0]));
+  assert.equal(m.beatsPerBar, 4);
+  assert.equal(m.beatUnit, 4);
+  assert.equal(m.sampleRate, 44100);
+  assert.equal(m.key, 'C');
+  assert.equal(m.mode, 'major');
+  assert.equal(m.tracks, 12);
+});
+
+test('the tempo edit is visible, so the field is not a coincidence', { skip: !haveFixtures }, () => {
+  // Same project, one value changed in GarageBand between the two saves.
+  const a = readBandMetadata(buf(BAND_FIXTURES[0][0]));
+  const b = readBandMetadata(buf(BAND_FIXTURES[1][0]));
+  assert.notEqual(a.bpm, b.bpm);
+  assert.equal(a.beatsPerBar, b.beatsPerBar, 'only the tempo should have moved');
+  assert.equal(a.sampleRate, b.sampleRate);
+});
+
+test('a missing field yields undefined rather than a silent default', () => {
+  // Hand-built minimal bplist: a dict with only BeatsPerMinute.
+  const m = readBandMetadata(buildMiniPlist(98.6));
+  assert.equal(m.bpm, 98.6);
+  assert.equal(m.beatsPerBar, undefined,
+    'absent time signature must be undefined so callers can tell it was absent');
+});
+
+test('parseBinaryPlist throws on a non-plist instead of returning junk', () => {
+  const junk = new Uint8Array(64);
+  junk.set(new TextEncoder().encode('RIFF'));
+  assert.throws(() => parseBinaryPlist(junk.buffer), /not a binary plist/);
+});
+
+test('formatBpm keeps a fractional tempo and tidies an integer one', () => {
+  assert.equal(formatBpm(121.0), '121');
+  assert.equal(formatBpm(137.5), '137.5');
+  assert.equal(formatBpm(120.00000001), '120');
+});
+
+test('pickMetadataFile prefers the lowest Alternatives index', () => {
+  const files = [
+    { path: 'X.band/Alternatives/001/MetaData.plist' },
+    { path: 'X.band/Alternatives/000/MetaData.plist' },
+    { path: 'X.band/Resources/ProjectInformation.plist' }
+  ];
+  assert.equal(pickMetadataFile(files).path, 'X.band/Alternatives/000/MetaData.plist');
+  assert.equal(pickMetadataFile([{ path: 'X.band/projectData' }]), null);
+});
+
+/* Minimal bplist00 with one real-valued entry, so the "absent field" test
+ * does not depend on a fixture being present. */
+function buildMiniPlist(bpm) {
+  const enc = new TextEncoder();
+  const key = enc.encode('BeatsPerMinute');
+  const parts = [];
+  parts.push(enc.encode('bplist00'));            // 0
+  const offsets = [];
+  let pos = 8;
+  offsets.push(pos);                             // obj 0: dict, 1 entry
+  parts.push(new Uint8Array([0xd1, 0x01, 0x02])); pos += 3;
+  offsets.push(pos);                             // obj 1: ASCII key
+  const k = new Uint8Array(1 + key.length);
+  k[0] = 0x50 | key.length; k.set(key, 1);
+  parts.push(k); pos += k.length;
+  offsets.push(pos);                             // obj 2: double
+  const dv = new Uint8Array(9); dv[0] = 0x23;
+  new DataView(dv.buffer).setFloat64(1, bpm, false);
+  parts.push(dv); pos += 9;
+
+  const tableAt = pos;
+  parts.push(new Uint8Array(offsets));           // 1-byte offsets
+  pos += offsets.length;
+  const tr = new Uint8Array(32);
+  const tv = new DataView(tr.buffer);
+  tr[6] = 1; tr[7] = 1;                          // offsetIntSize, objectRefSize
+  tv.setUint32(12, offsets.length, false);       // numObjects (low half)
+  tv.setUint32(20, 0, false);                    // topObject
+  tv.setUint32(28, tableAt, false);              // offsetTableOffset
+  parts.push(tr);
+
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(total);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out.buffer;
+}

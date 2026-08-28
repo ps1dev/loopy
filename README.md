@@ -54,6 +54,27 @@ other chunk is copied through byte for byte, so `cue`, `LIST`, `fact` and
 anything else the file carried survives, and the audio data is unchanged. For a
 non-WAV source it writes a new 16-bit PCM WAV.
 
+## GarageBand projects
+
+Drop a `.band` bundle on the window and the beat grid configures itself from
+the project. Tempo, time signature, key and sample rate come out of
+`Alternatives/000/MetaData.plist`, a plain binary plist - no reverse
+engineering of Logic's chunk format involved. You can also drop the
+`MetaData.plist` on its own.
+
+Measured against GarageBand 10.4.14 by changing one value in the app and
+diffing saves. `BeatsPerMinute` is stored as a **float32** (bplist marker
+`0x22`), so a fractional tempo survives but only to single precision - 121.3
+reads back as 121.30000305, which the UI rounds.
+
+What is *not* in the bundle: the cycle / loop region. `ProjectData` was
+searched for an adjacent (start,end) and (start,length) pair across beats,
+ppq 240/480/768/960/1920/3840/15360, 0- and 1-based bars, seconds and samples,
+as u16/u32/f32/f64, both endiannesses, within a 64-byte window, requiring the
+candidate to be rare in two projects differing only in cycle position. Zero
+survivors. That rules out adjacent-pair storage in those units; it is a
+bounded negative, not a proof of absence. Place loop points yourself.
+
 ## Two conventions worth knowing
 
 **`dwEnd` is inclusive.** The RIFF spec says the end sample "will also be
@@ -155,6 +176,8 @@ are always exact - the resampling is in what you hear, not in what gets written.
     js/audio.js         AudioContext and ScriptProcessorNode host
     js/waveform.js      peak pyramid, canvas drawing, mouse interaction
     js/grid.js          beat grid, tap tempo, snapping and alignment
+    js/bplist.js        Apple binary plist reader
+    js/band.js          GarageBand .band project metadata
     js/app.js           UI glue
     test/               see below
 

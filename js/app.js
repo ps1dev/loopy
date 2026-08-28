@@ -14,6 +14,7 @@ import * as Wav from './wav.js';
 import { BeatGrid, TapTempo, snapSample, alignSample, psxavencSafeQuantum } from './grid.js';
 import { AudioEngine, LOOP_FORWARD } from './audio.js';
 import { WaveformView, buildPeaks, formatTime } from './waveform.js';
+import * as Band from './band.js';
 
 var $ = function (id) { return document.getElementById(id); };
 
@@ -492,8 +493,101 @@ $('file').addEventListener('change', function (ev) {
   });
 });
 window.addEventListener('drop', function (ev) {
-  if (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0]) loadFile(ev.dataTransfer.files[0]);
+  var dt = ev.dataTransfer;
+  if (!dt) return;
+
+  // A macOS .band bundle arrives as a DIRECTORY, so it has to be checked
+  // before the plain-file path - dt.files for a folder drop is either empty
+  // or a useless stub, and taking that branch silently does nothing.
+  var hasDir = false;
+  if (dt.items) {
+    for (var i = 0; i < dt.items.length; i++) {
+      var e = dt.items[i].webkitGetAsEntry && dt.items[i].webkitGetAsEntry();
+      if (e && e.isDirectory) { hasDir = true; break; }
+    }
+  }
+  if (hasDir) { loadBandDrop(dt.items); return; }
+
+  var f = dt.files && dt.files[0];
+  if (!f) return;
+  if (Band.isMetadataPath(f.name)) { loadBandMetadataFile(f); return; }
+  loadFile(f);
 });
+
+/* ---- GarageBand project import ----------------------------------------- */
+
+function loadBandDrop(items) {
+  status('Reading project bundle...');
+  Band.readDroppedEntries(items).then(function (files) {
+    var meta = Band.pickMetadataFile(files);
+    if (!meta) {
+      // Say what was looked for and where, rather than "failed" - a bundle
+      // with an unexpected layout is a fact worth reporting back.
+      status('No MetaData.plist in that bundle (looked at ' + files.length +
+        ' files). If it is a .band, the file lives in Alternatives/000/.', 'err');
+      return;
+    }
+    loadBandMetadataFile(meta);
+  }).catch(function (err) {
+    console.error(err);
+    status('Could not read the dropped folder: ' + err.message, 'err');
+  });
+}
+
+function loadBandMetadataFile(file) {
+  file.arrayBuffer().then(function (buf) {
+    var m;
+    try {
+      m = Band.readBandMetadata(buf);
+    } catch (err) {
+      status('Not a readable MetaData.plist: ' + err.message, 'err');
+      return;
+    }
+    applyBandMetadata(m, file.path || file.name);
+  });
+}
+
+/*
+ * Apply only what the project actually stated. A field GarageBand did not
+ * write is left alone rather than defaulted, and the status line says which
+ * values came from the file - otherwise an assumed 4/4 is indistinguishable
+ * from a read one.
+ */
+function applyBandMetadata(m, label) {
+  var applied = [];
+  if (m.bpm !== undefined && m.bpm > 0) {
+    $('bpm').value = Band.formatBpm(m.bpm);
+    applied.push(Band.formatBpm(m.bpm) + ' BPM');
+  }
+  if (m.beatsPerBar !== undefined && m.beatsPerBar > 0) {
+    $('beatsbar').value = m.beatsPerBar;
+    applied.push(m.beatsPerBar + '/' + (m.beatUnit || 4));
+  }
+  if (applied.length) {
+    $('gridon').checked = true;
+    $('snapgrid').checked = true;
+    gridChanged();
+  }
+
+  var extra = [];
+  if (m.key) extra.push('key ' + m.key + (m.mode ? ' ' + m.mode : ''));
+  if (m.sampleRate) {
+    extra.push(m.sampleRate + ' Hz');
+    if (state.frames && m.sampleRate !== state.sampleRate) {
+      extra.push('WARNING: the loaded audio is ' + state.sampleRate +
+        ' Hz, so the grid will not line up');
+    }
+  }
+  if (m.tracks !== undefined) extra.push(m.tracks + ' tracks');
+
+  if (!applied.length) {
+    status('Read ' + (label || 'the project') + ' but it declared no tempo.', 'err');
+    return;
+  }
+  status('Grid set from ' + (label || 'project') + ': ' + applied.join(', ')
+    + (extra.length ? '  (' + extra.join(', ') + ')' : '')
+    + '. Loop points are not stored in the bundle - place those yourself.', 'ok');
+}
 
 $('play').addEventListener('click', async function () {
   await engine.init();
