@@ -320,8 +320,7 @@ export class WaveformView {
     }
   }
 
-  _drawLoopBands(ctx: CanvasRenderingContext2D, w: number, y0: number, h: number, 背景: boolean): void {
-    const background = 背景;
+  _drawLoopBands(ctx: CanvasRenderingContext2D, w: number, y0: number, h: number, background: boolean): void {
     for (let i = 0; i < this.loops.length; i++) {
       const L = this.loops[i];
       const sel = (i === this.selected);
