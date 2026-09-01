@@ -4,24 +4,28 @@ A web-based editor for audio loop points, aimed at getting a loop into a WAV
 file's `smpl` chunk so that something downstream (psxavenc, a sampler, a game
 engine) can use it.
 
-Plain HTML/CSS/JS, ES modules, no frameworks, no build step, no dependencies.
+Vanilla TypeScript, no framework, no runtime dependencies. Vite builds it to a
+single self-contained `dist/index.html`: no external JS, no external CSS, no
+fetches at runtime.
 
 ## Running it
 
-**It has to be served over HTTP. Opening `index.html` directly does not work** -
-that gives it a `file://` address and browsers refuse to load ES modules from
-there, so the page draws and then ignores every click.
+**Double-click `dist/index.html`.** That is the whole procedure. No server, no
+network, no install.
 
-Easiest, on macOS: double-click **`serve.command`** in this folder. It starts a
-server on a free port and opens the browser at it.
+The single-file build is not packaging convenience. The earlier multi-file
+version of this tool had to be served over HTTP, because a browser refuses to
+load ES modules from a `file://` origin - and it failed in the worst possible
+way, drawing the whole page correctly and then ignoring every click, since only
+the module graph was blocked. Inlining the modules removes the fetch, so the
+failure has nowhere left to live.
 
-Otherwise, from the folder holding `index.html`:
+To build it, or to work on it:
 
-    python3 -m http.server 8080
-    # then open http://localhost:8080/
-
-If you do open it from `file://` anyway, the page says so and gives you the
-command rather than failing silently.
+    npm install
+    npm run build      # -> dist/index.html
+    npm run dev        # dev server with hot reload
+    npm test           # tsc --noEmit, then the unit and browser suites
 
 ## What it does
 
@@ -191,7 +195,7 @@ belongs upstream.
 ## Playback
 
 Playback is a `ScriptProcessorNode` running a hand-written mixing loop
-(`js/player-core.js`) rather than an `AudioBufferSourceNode`. Two reasons:
+(`src/core/player-core.ts`) rather than an `AudioBufferSourceNode`. Two reasons:
 `loopStart`/`loopEnd` on a buffer source are doubles in *seconds*, so a
 sample-exact loop point depends on the browser's seconds-to-frames rounding
 agreeing with yours; and a buffer source can only loop forward, while two of
@@ -208,35 +212,53 @@ are always exact - the resampling is in what you hear, not in what gets written.
 
 ## Layout
 
-    index.html          markup
-    css/style.css
-    js/wav.js           RIFF/WAVE reader and writer, smpl chunk
-    js/player-core.js   the sample loop: looping, resampling, metronome
-    js/audio.js         AudioContext and ScriptProcessorNode host
-    js/waveform.js      peak pyramid, canvas drawing, mouse interaction
-    js/grid.js          beat grid, tap tempo, snapping and alignment
-    js/bplist.js        Apple binary plist reader
-    js/band.js          GarageBand .band project metadata
-    js/app.js           UI glue
-    test/               see below
+`src/core` is everything that runs without a DOM, which is also everything the
+unit tests can reach directly. `src/ui` is the parts that own pixels.
 
-`package.json` exists only so `node --test` can import the same module files
-the browser loads. There are no dependencies to install.
+    index.html               markup
+    src/style.css
+    src/main.ts              UI glue
+    src/core/wav.ts          RIFF/WAVE reader and writer, smpl chunk
+    src/core/player-core.ts  the sample loop: looping, resampling, metronome
+    src/core/grid.ts         beat grid, tap tempo, snapping and alignment
+    src/core/peaks.ts        the peak pyramid
+    src/core/time.ts         timecode formatting
+    src/core/bplist.ts       Apple binary plist reader
+    src/core/band.ts         GarageBand .band project metadata
+    src/ui/audio.ts          AudioContext and ScriptProcessorNode host
+    src/ui/waveform.ts       canvas drawing and mouse interaction
+    test/                    see below
 
 ## Tests
 
-    node --test test/test.mjs                    # logic only, no browser needed
-    PLAYWRIGHT_DIR=/path/to/a/playwright/install bash test/run-e2e.sh
+    npm test
 
-The unit tests cover the RIFF reader and writer and the playback loop. The
-player tests use a *ramp* source where sample N holds the value N, so the
-rendered output is a literal transcript of which sample indices were read - a
-loop bug shows up as the wrong integers rather than as "sounds wrong".
+That is `tsc --noEmit`, then vitest over both suites. Typechecking runs first
+on purpose: vitest transpiles without typechecking, so a type error alone will
+not fail a test run.
 
-`test/run-e2e.sh` additionally drives the real page in headless Chromium:
-loads a fixture through the actual file input, checks the canvas painted more
-than one colour, plays, drags a loop handle, exports, and then hands the
-exported file to `test/fixture.py` - a deliberately independent Python
-implementation of the same format - to confirm the bytes are right. A round
-trip where my parser checks my writer proves only that the two agree with each
-other.
+The unit tests cover the RIFF reader and writer, the beat grid, the peak
+pyramid, the plist reader and the playback loop. The player tests use a *ramp*
+source where sample N holds the value N, so the rendered output is a literal
+transcript of which sample indices were read - a loop bug shows up as the wrong
+integers rather than as "sounds wrong".
+
+Four of the GarageBand tests need real `.band` fixtures and skip without them.
+They skip loudly; they do not quietly pass.
+
+`test/e2e.spec.ts` drives the real page in headless Chromium, loaded from
+`file://dist/index.html` - the same way a user opens it, which is the thing
+worth testing. It rebuilds first if `dist` is older than `src`, because a test
+that silently grades a previous build is measuring the wrong binary. It loads a
+fixture through the actual file input, checks the canvas painted more than one
+colour, plays, drags a loop handle, exports, and hands the exported file to
+`test/fixture.py` - a deliberately independent Python implementation of the same
+format - to confirm the bytes are right. A round trip where my parser checks my
+writer proves only that the two agree with each other.
+
+It launches **two** browsers. Playback needs
+`--autoplay-policy=no-user-gesture-required` or nothing ever sounds; but that
+flag is a blindfold, because the decode test exists for a bug whose entire
+precondition is a *suspended* AudioContext. So the decode case gets its own
+browser without the flag, and forces the suspended state rather than hoping for
+it - headless Chromium was observed starting the context anyway.
