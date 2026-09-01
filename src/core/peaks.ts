@@ -61,10 +61,19 @@ export function buildPeaks(channels: Float32Array[]): PeakPyramid {
  *
  * Only the base level is chunked: the reductions above it are cheap (half the
  * work of the level below, geometrically), so they run in one go at the end.
+ *
+ * `yieldEveryMs` exists for the tests and nothing else. How many slices a build
+ * splits into is a race against the wall clock: a build that finishes inside
+ * one interval yields once, at the end, and that is CORRECT behaviour rather
+ * than a bug. A test asserting "several progress reports" is therefore grading
+ * machine speed, which is exactly how it failed 1 run in 4 once the suite began
+ * running files in parallel workers next to a browser launch. Passing 0 makes
+ * every check point yield, so the chunking can be asserted deterministically.
  */
 export async function buildPeaksAsync(
   channels: Float32Array[],
-  onProgress?: ((fraction: number) => void) | null
+  onProgress?: ((fraction: number) => void) | null,
+  yieldEveryMs: number = 12
 ): Promise<PeakPyramid> {
   const out: PeakPyramid = [];
   let totalBuckets = 0;
@@ -92,7 +101,7 @@ export async function buildPeaksAsync(
       // performance.now() per bucket is itself a measurable cost here.
       if ((i & 255) === 0) {
         const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-        if (now - lastYield > 12) {
+        if (now - lastYield > yieldEveryMs) {
           if (onProgress) onProgress(done / totalBuckets);
           await new Promise(function (r) { setTimeout(r, 0); });
           lastYield = (typeof performance !== 'undefined' ? performance.now() : Date.now());

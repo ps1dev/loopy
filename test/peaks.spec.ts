@@ -37,11 +37,19 @@ describe('chunked peak building', () => {
   it('the async builder actually yields, and reports monotonic progress', async () => {
     // A "chunked" builder that never yields is the failure this guards: it
     // would pass the equality test above and still freeze the page.
+    //
+    // yieldEveryMs: 0 forces a yield at every check point. Without it this
+    // asserts a race against the wall clock - a build that happens to finish
+    // inside one 12 ms interval reports progress exactly once, which is correct
+    // behaviour, and the test failed on it 1 run in 4 once the suite started
+    // running files in parallel workers beside a browser launch. The property
+    // worth grading is that the builder yields and reports honestly, not how
+    // fast this machine is today.
     let ticks = 0;
     const seen: number[] = [];
     const timer = setInterval(() => { ticks++; }, 1);
     const t0 = Date.now();
-    await buildPeaksAsync([noisy(3000000)], f => seen.push(f));
+    await buildPeaksAsync([noisy(3000000)], f => seen.push(f), 0);
     clearInterval(timer);
 
     expect(seen.length > 1, 'progress reported ' + seen.length + ' time(s); expected several').toBe(true);
@@ -52,6 +60,21 @@ describe('chunked peak building', () => {
     expect(seen.every(f => f >= 0 && f <= 1), 'progress out of range').toBe(true);
     expect(ticks > 0,
       'the event loop never ran during the build (took ' + (Date.now() - t0) + 'ms) - it did not yield').toBe(true);
+  });
+
+  it('the default yield interval still chunks a real-sized build', async () => {
+    // The test above pins the mechanism with the clock taken out of it. This
+    // one grades the shipped default, and deliberately asserts only what is
+    // true regardless of machine speed: progress is reported, it ends at 1, and
+    // it never runs backwards. It must NOT assert a slice count - that is the
+    // race the test above exists to avoid re-introducing here.
+    const seen: number[] = [];
+    await buildPeaksAsync([noisy(3000000)], f => seen.push(f));
+    expect(seen.length >= 1, 'no progress reported at all').toBe(true);
+    expect(seen[seen.length - 1], 'must finish at exactly 1').toBe(1);
+    for (let i = 1; i < seen.length; i++) {
+      expect(seen[i] >= seen[i - 1], 'progress went backwards').toBe(true);
+    }
   });
 
   it('the async builder handles an empty source without dividing by zero', async () => {
