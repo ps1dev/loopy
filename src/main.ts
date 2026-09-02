@@ -732,10 +732,50 @@ window.addEventListener('drop', function (ev: DragEvent) {
   }
   if (hasDir) { loadBandDrop(dt.items); return; }
 
-  const f = dt.files && dt.files[0];
-  if (!f) return;
+  /*
+   * Safari does not always populate `dataTransfer.files`, while `items` is
+   * there with the file behind `getAsFile()`. The old code read `files` only
+   * and RETURNED SILENTLY when it was empty, so a drop Safari had handed over
+   * perfectly well produced no action and no message - indistinguishable, from
+   * the outside, from the page ignoring the drop entirely.
+   */
+  let f: File | null = (dt.files && dt.files[0]) || null;
+  if (!f && dt.items) {
+    for (let i = 0; i < dt.items.length && !f; i++) {
+      const it = dt.items[i];
+      if (it.kind === 'file' && it.getAsFile) f = it.getAsFile();
+    }
+  }
+  if (!f) {
+    // Never a silent return. What arrived is the only thing that tells anyone
+    // whether this is a browser difference or an empty drag.
+    status('Nothing usable in that drop. ' + describeDrop(dt), 'err');
+    return;
+  }
   dispatchFile(f);
 });
+
+/*
+ * Describe a DataTransfer for a human reading a status line. Deliberately
+ * concrete - counts and names, not "unsupported" - because the person seeing
+ * this is on a browser the author could not test.
+ */
+function describeDrop(dt: DataTransfer): string {
+  const bits: string[] = [];
+  bits.push('files: ' + (dt.files ? dt.files.length : 'none'));
+  if (dt.items) {
+    const kinds: string[] = [];
+    for (let i = 0; i < dt.items.length; i++) {
+      kinds.push(dt.items[i].kind + (dt.items[i].type ? '/' + dt.items[i].type : ''));
+    }
+    bits.push('items: ' + (kinds.length ? kinds.join(', ') : 'none'));
+  } else {
+    bits.push('items: unavailable');
+  }
+  const types = dt.types ? Array.prototype.slice.call(dt.types).join(', ') : '';
+  if (types) bits.push('types: ' + types);
+  return bits.join(' | ');
+}
 
 /* ---- GarageBand project import ----------------------------------------- */
 
@@ -1160,6 +1200,7 @@ engine.setGrid(grid);
 gridChanged();
 renderLoopList();
 requestAnimationFrame(frame);
+$('buildstamp').textContent = 'build ' + __BUILD_STAMP__;
 status('Ready. Open a .wav (or drop one anywhere) to start.');
 
 declare global {
