@@ -20,6 +20,7 @@ import { WaveformView } from './ui/waveform.js';
 import { buildPeaksAsync } from './core/peaks.js';
 import { formatTime } from './core/time.js';
 import * as Band from './core/band.js';
+import * as Logic from './core/logicsong.js';
 
 function $<T extends HTMLElement = HTMLElement>(id: string): T {
   return document.getElementById(id) as T;
@@ -682,8 +683,21 @@ $('file').addEventListener('change', function (ev: Event) {
   // rejecting.
   engine.init();
   const target = ev.target as HTMLInputElement;
-  if (target.files && target.files[0]) loadFile(target.files[0]);
+  if (target.files && target.files[0]) dispatchFile(target.files[0]);
 });
+
+/*
+ * One routing decision for both entry points. The picker used to call
+ * loadFile() directly, so choosing a MetaData.plist through the Open button
+ * went to the audio decoder and reported a decode error, while dropping the
+ * same file worked - a difference with no reason behind it that nobody would
+ * think to report as a bug.
+ */
+function dispatchFile(f: File): void {
+  if (Band.isMetadataPath(f.name)) { loadBandMetadataFile(f); return; }
+  if (Logic.isProjectDataPath(f.name)) { loadProjectDataFile(f); return; }
+  loadFile(f);
+}
 
 ['dragenter', 'dragover'].forEach(function (t: string) {
   window.addEventListener(t, function (ev: Event) { ev.preventDefault(); $('drop').classList.remove('hidden'); });
@@ -699,9 +713,16 @@ window.addEventListener('drop', function (ev: DragEvent) {
   const dt = ev.dataTransfer;
   if (!dt) return;
 
-  // A macOS .band bundle arrives as a DIRECTORY, so it has to be checked
-  // before the plain-file path - dt.files for a folder drop is either empty
-  // or a useless stub, and taking that branch silently does nothing.
+  // A dropped DIRECTORY has to be checked before the plain-file path -
+  // dt.files for a folder drop is either empty or a useless stub, and taking
+  // that branch silently does nothing.
+  //
+  // ⚠ 2026-09-02: this branch was written believing a macOS .band bundle
+  // would arrive here. IT DOES NOT - confirmed by a user on macOS, the
+  // package is handed over as one opaque file and the bundle branch never
+  // fires. The directory path is kept because an unpacked folder still takes
+  // it; the working routes for a package are dropping ProjectData or
+  // MetaData.plist out of it directly, handled below.
   let hasDir = false;
   if (dt.items) {
     for (let i = 0; i < dt.items.length; i++) {
@@ -713,8 +734,7 @@ window.addEventListener('drop', function (ev: DragEvent) {
 
   const f = dt.files && dt.files[0];
   if (!f) return;
-  if (Band.isMetadataPath(f.name)) { loadBandMetadataFile(f); return; }
-  loadFile(f);
+  dispatchFile(f);
 });
 
 /* ---- GarageBand project import ----------------------------------------- */
@@ -722,7 +742,12 @@ window.addEventListener('drop', function (ev: DragEvent) {
 function loadBandDrop(items: DataTransferItemList): void {
   status('Reading project bundle...');
   Band.readDroppedEntries(items).then(function (files: File[]) {
+    // ProjectData first: it carries the whole tempo MAP, while MetaData.plist
+    // holds a single scalar and can never describe a project whose tempo
+    // changes. Metadata is still read afterwards for key, meter and rate.
+    const proj = Band.pickBundleFile(files, Logic.isProjectDataPath);
     const meta = Band.pickMetadataFile(files);
+    if (proj) { loadProjectDataFile(proj, meta || undefined); return; }
     if (!meta) {
       // Say what was looked for and where, rather than "failed" - a bundle
       // with an unexpected layout is a fact worth reporting back.
@@ -748,6 +773,79 @@ function loadBandMetadataFile(file: File): void {
     }
     applyBandMetadata(m, (file as File & { path?: string }).path || file.name);
   });
+}
+
+/*
+ * Read Alternatives/<n>/ProjectData - the whole tempo map, not just a first
+ * tempo. `meta` is optional and supplies only the fallback meter, used when
+ * the project states no time signature of its own.
+ */
+function loadProjectDataFile(file: File, meta?: File): void {
+  const label = (file as File & { path?: string }).path || file.name;
+  const metaSig = meta
+    ? meta.arrayBuffer().then(function (b) {
+        try {
+          const m = Band.readBandMetadata(b);
+          if (m.beatsPerBar) return { numerator: m.beatsPerBar, denominator: m.beatUnit || 4 };
+        } catch { /* a bad plist must not sink a good ProjectData */ }
+        return undefined;
+      })
+    : Promise.resolve(undefined);
+
+  Promise.all([file.arrayBuffer(), metaSig]).then(function (r) {
+    const buf = r[0] as ArrayBuffer;
+    const fallback = r[1] as { numerator: number; denominator: number } | undefined;
+    let bars: Logic.BarTempo[];
+    let meterFromProject: boolean;
+    try {
+      const song = Logic.parseLogicSong(buf);
+      // Which source actually won is a fact about the parse, not about what
+      // was offered - the fallback is only consulted when the project states
+      // no signature of its own.
+      meterFromProject = song.signatures.length > 0;
+      bars = Logic.tempoMapToBars(song, fallback);
+    } catch (err) {
+      status('Could not read ' + label + ': ' + (err as Error).message, 'err');
+      return;
+    }
+    applyTempoMap(bars, label, meterFromProject ? 'the project' : (fallback ? 'MetaData.plist' : 'the 4/4 default'));
+  }).catch(function (err: unknown) {
+    status('Could not read ' + label + ': ' + (err as Error).message, 'err');
+  });
+}
+
+/*
+ * Push a parsed tempo map into the grid. The inputs are set from the FIRST
+ * entry before gridChanged() so the single-tempo controls agree with bar one,
+ * then setTempos installs the rest - gridChanged reads the inputs, so doing
+ * it the other way round would flatten the map back to one tempo.
+ */
+function applyTempoMap(bars: Logic.BarTempo[], label: string, meterSource: string): void {
+  if (!bars.length) {
+    status('Read ' + label + ' but it declared no tempo.', 'err');
+    return;
+  }
+  $<HTMLInputElement>('bpm').value = String(bars[0].bpm);
+  $<HTMLInputElement>('beatsbar').value = String(bars[0].beatsPerBar);
+  $<HTMLInputElement>('gridon').checked = true;
+  $<HTMLInputElement>('snapgrid').checked = true;
+  gridChanged();
+  grid.setTempos(bars);
+  afterGridEdit();
+
+  // Exact, not Band.formatBpm: that rounds for display because MetaData.plist
+  // stores a float32 with junk digits, whereas a ProjectData tempo is an
+  // integer over 10000 and is exact. Rounding 128.3402 to 128.34 here would
+  // misreport what was actually imported.
+  const changes = bars.slice(1).map(function (t) {
+    return 'bar ' + t.bar + ' -> ' + String(t.bpm);
+  });
+  // Name where the meter came from. An assumed 4/4 and a read 4/4 look
+  // identical in the box, and only one of them is evidence.
+  const meter = bars[0].beatsPerBar + ' beats/bar (from ' + meterSource + ')';
+  status('Tempo map from ' + label + ': ' + String(bars[0].bpm) + ' BPM at bar 1' +
+    (changes.length ? ', then ' + changes.join(', ') : ' (no changes)') +
+    '. ' + meter + '. Loop points are not stored in the project - place those yourself.', 'ok');
 }
 
 /*

@@ -170,11 +170,20 @@ export function isMetadataPath(path: string): boolean {
  * resolve by directory-iteration order, which is not defined.
  */
 export function pickMetadataFile<T extends NamedFile>(files: T[]): T | null {
+  return pickBundleFile(files, isMetadataPath);
+}
+
+/*
+ * The same lowest-Alternatives-wins choice for any file in a dropped bundle.
+ * Split out so the ProjectData reader shares the tie-break rather than
+ * reimplementing it and drifting.
+ */
+export function pickBundleFile<T extends NamedFile>(files: T[], match: (path: string) => boolean): T | null {
   // The `|| ''` are the only additions: with neither field set the original
   // handed `undefined` to a regex test, which coerces to the string
   // "undefined" and fails to match exactly as '' does - so the filter drops
   // that record either way and the sort below never sees one.
-  const cands = files.filter(function (f) { return isMetadataPath(f.path || f.name || ''); });
+  const cands = files.filter(function (f) { return match(f.path || f.name || ''); });
   if (!cands.length) return null;
   cands.sort(function (a, b) {
     const pa = a.path || a.name || '', pb = b.path || b.name || '';
