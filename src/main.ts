@@ -881,7 +881,7 @@ function applyTempoMap(bars: Logic.BarTempo[], label: string, meterSource: strin
   const meter = bars[0].beatsPerBar + ' beats/bar (from ' + meterSource + ')';
   status('Tempo map from ' + label + ': ' + String(bars[0].bpm) + ' BPM at bar 1' +
     (changes.length ? ', then ' + changes.join(', ') : ' (no changes)') +
-    '. ' + meter + '. Loop points are not stored in the project - place those yourself.', 'ok');
+    '. ' + meter + '. Loop points are not read from the project yet - place those yourself.', 'ok');
 }
 
 /*
@@ -923,7 +923,7 @@ function applyBandMetadata(m: BandMetadata, label: string): void {
   }
   status('Grid set from ' + (label || 'project') + ': ' + applied.join(', ')
     + (extra.length ? '  (' + extra.join(', ') + ')' : '')
-    + '. Loop points are not stored in the bundle - place those yourself.', 'ok');
+    + '. Loop points are not read from the bundle yet - place those yourself.', 'ok');
 }
 
 $('play').addEventListener('click', async function () {
