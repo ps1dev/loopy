@@ -78,12 +78,18 @@ export interface BarTempo {
 }
 
 /**
- * Is this the project binary? Capital P, no extension, optionally under an
- * `Alternatives/<n>/` directory. Deliberately does NOT match the bundle's
- * top-level `projectData` - see `describeNonSong`.
+ * Is this the project binary? No extension, optionally under an
+ * `Alternatives/<n>/` directory.
+ *
+ * ⚠ CASE-INSENSITIVE ON PURPOSE, changed 2026-09-02 after a user dropped the
+ * bundle-root `projectData` (lowercase p). A capital-only match declined it
+ * silently and it fell through to the audio decoder, which reports a decode
+ * error - true, useless, and it hides the one thing worth saying. Routing on
+ * the NAME and diagnosing on the CONTENT is the right split: this accepts
+ * both, and `describeNonSong` then names the mistake exactly.
  */
 export function isProjectDataPath(path: string): boolean {
-  return /(^|\/)ProjectData$/.test(path);
+  return /(^|\/)ProjectData$/i.test(path);
 }
 
 export function isChunkedSong(buffer: ArrayBuffer): boolean {
@@ -127,11 +133,17 @@ interface Record_ {
 export function readRecords(buffer: ArrayBuffer): Record_[] {
   if (!isChunkedSong(buffer)) throw new Error(describeNonSong(buffer));
   const dv = new DataView(buffer);
+  /*
+   * The length field is checked but NOT fatal.
+   *
+   * It matched exactly on the one project I had when this was written, and a
+   * hard failure on a sample of size one would reject a legitimate file for a
+   * header convention I have not actually surveyed. The real integrity check
+   * is below: a walk that lands exactly on the final byte cannot be a
+   * coincidence, and a wrong one desynchronises within a few records.
+   */
   const declared = dv.getUint32(0x10, true);
-  if (declared !== buffer.byteLength - 24) {
-    throw new Error('length field ' + declared + ' does not match file size - 24 (' +
-      (buffer.byteLength - 24) + ')');
-  }
+  const lengthFieldOk = declared === buffer.byteLength - 24;
   const out: Record_[] = [];
   let off = 0x18;
   while (off + 0x24 <= buffer.byteLength) {
@@ -149,7 +161,8 @@ export function readRecords(buffer: ArrayBuffer): Record_[] {
   }
   if (off !== buffer.byteLength) {
     throw new Error('record walk ended at 0x' + off.toString(16) + ', expected 0x' +
-      buffer.byteLength.toString(16));
+      buffer.byteLength.toString(16) +
+      (lengthFieldOk ? '' : ' (the header length field disagrees with the file size too)'));
   }
   return out;
 }

@@ -713,16 +713,29 @@ window.addEventListener('drop', function (ev: DragEvent) {
   const dt = ev.dataTransfer;
   if (!dt) return;
 
-  // A dropped DIRECTORY has to be checked before the plain-file path -
-  // dt.files for a folder drop is either empty or a useless stub, and taking
-  // that branch silently does nothing.
-  //
-  // ⚠ 2026-09-02: this branch was written believing a macOS .band bundle
-  // would arrive here. IT DOES NOT - confirmed by a user on macOS, the
-  // package is handed over as one opaque file and the bundle branch never
-  // fires. The directory path is kept because an unpacked folder still takes
-  // it; the working routes for a package are dropping ProjectData or
-  // MetaData.plist out of it directly, handled below.
+  /*
+   * ⚠ RESOLVE A FILE FIRST. `webkitGetAsEntry().isDirectory` cannot gate this.
+   *
+   * MEASURED on Safari 26.0.1 / macOS, 2026-09-02: a dropped `.zip` reported
+   * `isFile=false isDirectory=true` while `getAsFile()` handed back a
+   * perfectly readable 42 MB File, and `createReader().readEntries()` then
+   * failed with NotFoundError. Gating on isDirectory sent an ordinary file
+   * down the bundle walk, which came back empty and reported "no
+   * MetaData.plist in that bundle" about a file that was never a bundle.
+   *
+   * A real folder drop yields no usable File (null, or a zero-length stub),
+   * which is what the size check separates.
+   */
+  let f: File | null = null;
+  if (dt.items) {
+    for (let i = 0; i < dt.items.length && !f; i++) {
+      const it = dt.items[i];
+      if (it.kind === 'file' && it.getAsFile) f = it.getAsFile();
+    }
+  }
+  if (!f) f = (dt.files && dt.files[0]) || null;
+  if (f && f.size > 0) { dispatchFile(f); return; }
+
   let hasDir = false;
   if (dt.items) {
     for (let i = 0; i < dt.items.length; i++) {
@@ -732,27 +745,10 @@ window.addEventListener('drop', function (ev: DragEvent) {
   }
   if (hasDir) { loadBandDrop(dt.items); return; }
 
-  /*
-   * Safari does not always populate `dataTransfer.files`, while `items` is
-   * there with the file behind `getAsFile()`. The old code read `files` only
-   * and RETURNED SILENTLY when it was empty, so a drop Safari had handed over
-   * perfectly well produced no action and no message - indistinguishable, from
-   * the outside, from the page ignoring the drop entirely.
-   */
-  let f: File | null = (dt.files && dt.files[0]) || null;
-  if (!f && dt.items) {
-    for (let i = 0; i < dt.items.length && !f; i++) {
-      const it = dt.items[i];
-      if (it.kind === 'file' && it.getAsFile) f = it.getAsFile();
-    }
-  }
-  if (!f) {
-    // Never a silent return. What arrived is the only thing that tells anyone
-    // whether this is a browser difference or an empty drag.
-    status('Nothing usable in that drop. ' + describeDrop(dt), 'err');
-    return;
-  }
-  dispatchFile(f);
+  // Never a silent return: a drop that reached here carried no readable file
+  // and no walkable directory, and what it DID carry is the only thing that
+  // tells anyone whether this is a browser difference or an empty drag.
+  status('Nothing usable in that drop. ' + describeDrop(dt), 'err');
 });
 
 /*

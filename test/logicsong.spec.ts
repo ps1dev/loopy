@@ -242,11 +242,23 @@ describe('tempoMapToBars: walks the meter map instead of dividing', () => {
 /* ---- 5. container validation ----------------------------------------------- */
 
 describe('readRecords / describeNonSong: container validation', () => {
-  it('throws on a wrong length field at +0x10', () => {
+  /*
+   * CHANGED 2026-09-02: a bad length field is no longer fatal.
+   *
+   * The old assertion was `toThrow(/length field/)`. That check had been
+   * verified against exactly ONE real project, and making it fatal on a
+   * sample of that size risks rejecting a legitimate file over a header
+   * convention nobody has surveyed. The walk landing exactly on the final
+   * byte is the integrity check that cannot pass by accident, so the records
+   * are what decide - the length field only decorates the error when the walk
+   * ALSO fails.
+   */
+  it('tolerates a wrong length field when the records still walk cleanly', () => {
     const buf = buildSong([qSvE(tempoRows(ORIGIN, 120), terminatorRows())]);
     const bytes = new Uint8Array(buf.slice(0));
     new DataView(bytes.buffer).setUint32(0x10, 0xdeadbeef, true);
-    expect(() => readRecords(bytes.buffer)).toThrow(/length field/);
+    expect(() => readRecords(bytes.buffer)).not.toThrow();
+    expect(readRecords(bytes.buffer)).toHaveLength(1);
   });
 
   it('throws when a record size field would walk past EOF', () => {
@@ -285,9 +297,21 @@ describe('isProjectDataPath', () => {
     expect(isProjectDataPath('Sortie.band/Alternatives/000/ProjectData')).toBe(true);
   });
 
-  it('does not match the lowercase bundle-root projectData or a .bak file', () => {
-    expect(isProjectDataPath('Sortie.band/projectData')).toBe(false);
+  /*
+   * CHANGED 2026-09-02, driven by a real drop: a user dropped the bundle-root
+   * `projectData` (lowercase p) and the capital-only match declined it, so it
+   * fell through to the audio decoder and reported a decode error - true and
+   * useless. Routing is now by NAME, case-insensitively, and the diagnosis is
+   * by CONTENT: describeNonSong names the mistake and points at
+   * Alternatives/000/ProjectData. Extensions are still rejected.
+   */
+  it('matches the lowercase bundle-root projectData, so it can be diagnosed by content', () => {
+    expect(isProjectDataPath('Sortie.band/projectData')).toBe(true);
+  });
+
+  it('does not match a file with an extension', () => {
     expect(isProjectDataPath('Sortie.band/Alternatives/000/ProjectData.bak')).toBe(false);
+    expect(isProjectDataPath('ProjectData.zip')).toBe(false);
   });
 });
 
