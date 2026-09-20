@@ -4,6 +4,8 @@ A web-based editor for audio loop points, aimed at getting a loop into a WAV
 file's `smpl` chunk so that something downstream (psxavenc, a sampler, a game
 engine) can use it.
 
+Running at <https://tools.psx.dev/loopy/>.
+
 Vanilla TypeScript, no framework, no runtime dependencies. Vite builds it to a
 single self-contained `dist/index.html`: no external JS, no external CSS, no
 fetches at runtime.
